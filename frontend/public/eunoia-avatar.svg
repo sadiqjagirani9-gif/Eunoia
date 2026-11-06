@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-label="Eunoia 白发二次元形象">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="65%"><stop stop-color="#fff"/><stop offset="1" stop-color="#e9e3ed"/></radialGradient>
+    <linearGradient id="hair" x1=".15" y1="0" x2=".85" y2="1"><stop stop-color="#fff"/><stop offset=".55" stop-color="#e8e6eb"/><stop offset="1" stop-color="#c9c7d1"/></linearGradient>
+    <linearGradient id="skin" x1=".2" y1="0" x2=".8" y2="1"><stop stop-color="#fff0e8"/><stop offset="1" stop-color="#e9c9c5"/></linearGradient>
+  </defs>
+  <circle cx="120" cy="120" r="116" fill="url(#bg)"/>
+  <path d="M47 224c5-36 25-53 55-61h39c32 8 50 27 55 61" fill="#898196"/>
+  <path d="M68 106c-3-47 18-77 52-79 37-2 57 27 52 78l-3 60c-2 25-22 40-48 41-30 1-51-15-53-42z" fill="url(#hair)"/>
+  <path d="M72 104c-14-36-1-66 22-81-2 21 7 28 17 37 6-21 25-34 45-36-9 15-7 27 8 39 13 11 17 31 9 53-8-15-16-23-26-29-14 13-32 19-53 17-8 0-15 0-22 0z" fill="url(#hair)"/>
+  <path d="M68 94c-15 16-17 43-8 67 4 12 10 23 19 31l-4-64zM170 86c18 12 22 38 16 64-3 14-10 27-19 37l4-63z" fill="#d9d7df"/>
+  <path d="M83 99c4-13 16-21 31-21h15c17 0 29 9 32 24l-2 49c-2 23-17 38-38 38s-36-15-38-38z" fill="url(#skin)"/>
+  <path d="M80 102c7-5 17-8 27-8 24 0 39-7 50-20 6 10 7 18 5 29-9-5-16-11-21-18-13 13-35 18-61 17z" fill="#f7f6f8"/>
+  <path d="M91 125c5-5 12-6 18-2M131 123c6-4 13-3 18 2" fill="none" stroke="#756b7d" stroke-width="3" stroke-linecap="round"/>
+  <ellipse cx="102" cy="135" rx="4" ry="7" fill="#70667b"/><ellipse cx="139" cy="135" rx="4" ry="7" fill="#70667b"/>
+  <path d="M113 158c5 4 11 4 16 0" fill="none" stroke="#b9787d" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="181" cy="56" r="7" fill="#c7b9d2"/><path d="m181 38 3 13 12 5-12 4-3 13-4-13-12-4 12-5z" fill="#fff" opacity=".9"/>
+</svg>
