@@ -1,4 +1,4 @@
-.modal-backdrop{display:none}
+.legacy-memory-backdrop-hidden{display:none}
 .memory-editor-backdrop{position:fixed;inset:0;z-index:14;background:#35313a55;display:grid;place-items:center;padding:18px}
 .memory-form{padding:13px 0;border-top:1px solid #ece8e5}
 .memory-form-title{font-size:10px;color:#77717a;margin:0 0 8px}

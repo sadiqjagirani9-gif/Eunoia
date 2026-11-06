@@ -25,10 +25,6 @@ Ollama manages GPU acceleration and falls back to CPU when a compatible GPU is u
 
 The app binds to localhost and sends chat and retrieval requests only to the local backend and local Ollama. SQLite stores conversation content, knowledge metadata, and optional user-approved memories on this device. Importing a webpage is an explicit user action: Eunoia fetches that public HTTPS page and stores its extracted text locally; it does not send chat or memory data to the page. This is a reflection tool, not therapy or diagnosis. In urgent danger, contact local emergency services or a trusted person.
 
-## V2 高级认知功能
-
-左侧“高级认知”入口包含三个本地功能：双重人格分析分别使用温柔导师和理性观察者两套独立提示词；情感关系图谱保存人物、单向或双向关系、来源和关系事件；反事实模拟生成原有选择与两个替代路径，并明确短期、中期、长期影响及不确定性。新增表通过版本迁移创建，首次升级会生成 `eunoia.pre-v2-backup.sqlite3`，不会删除旧对话或记忆。
-
 ## V3 长期认知画像
 
 侧栏“我的认知画像”会对每条用户消息进行本地关键词结构化提取，生成待确认线索，覆盖情绪、思维、人际、价值观、行为和自我认知六个维度。观察附有来源证据和可信度等级，用户可以认同、部分认同、不认同、补充或删除；已确认观察会在后续对话、双重分析和反事实模拟中作为可纠正上下文。认知差异以问题呈现，不自动判断用户前后矛盾。
