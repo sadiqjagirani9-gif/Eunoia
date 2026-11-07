@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 import httpx
 
 from .db import connect, database_path
+from .persona_context import LOCAL_USER_ID, PersonaContext
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 KNOWLEDGE_ROOT = PROJECT_ROOT / "knowledge_base"
@@ -89,7 +90,7 @@ def _source_metadata(path: Path) -> dict:
     return {field: str(data.get(field, "")) for field in METADATA_FIELDS}
 
 
-def _store_source(source_path: str, persona: str, domain: str, title: str, content: str, source_type: str, metadata: dict | None = None) -> str:
+def _store_source(source_path: str, persona: str, domain: str, title: str, content: str, source_type: str, metadata: dict | None = None, user_id: str = LOCAL_USER_ID) -> str:
     if not content.strip():
         raise ValueError("知识内容不能为空")
     checksum = _digest(content)
@@ -101,13 +102,13 @@ def _store_source(source_path: str, persona: str, domain: str, title: str, conte
                 values = {field: str(metadata.get(field, "")) for field in METADATA_FIELDS}
                 db.execute("INSERT INTO knowledge_source_metadata(source_id,creator,source_url,discipline,published,source_version,license,summary,scope,notes) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET creator=excluded.creator,source_url=excluded.source_url,discipline=excluded.discipline,published=excluded.published,source_version=excluded.source_version,license=excluded.license,summary=excluded.summary,scope=excluded.scope,notes=excluded.notes,updated_at=CURRENT_TIMESTAMP", (source_id, *(values[field] for field in METADATA_FIELDS)))
             return source_id
-        db.execute("INSERT INTO knowledge_sources(id,persona,domain,title,source_path,source_type,content,checksum) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(source_path) DO UPDATE SET persona=excluded.persona,domain=excluded.domain,title=excluded.title,source_type=excluded.source_type,content=excluded.content,checksum=excluded.checksum,updated_at=CURRENT_TIMESTAMP", (source_id, persona, domain, title, source_path, source_type, content, checksum))
+        db.execute("INSERT INTO knowledge_sources(id,user_id,persona,domain,title,source_path,source_type,content,checksum) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(source_path) DO UPDATE SET user_id=excluded.user_id,persona=excluded.persona,domain=excluded.domain,title=excluded.title,source_type=excluded.source_type,content=excluded.content,checksum=excluded.checksum,updated_at=CURRENT_TIMESTAMP", (source_id, user_id, persona, domain, title, source_path, source_type, content, checksum))
         if metadata is not None:
             values = {field: str(metadata.get(field, "")) for field in METADATA_FIELDS}
             db.execute("INSERT INTO knowledge_source_metadata(source_id,creator,source_url,discipline,published,source_version,license,summary,scope,notes) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET creator=excluded.creator,source_url=excluded.source_url,discipline=excluded.discipline,published=excluded.published,source_version=excluded.source_version,license=excluded.license,summary=excluded.summary,scope=excluded.scope,notes=excluded.notes,updated_at=CURRENT_TIMESTAMP", (source_id, *(values[field] for field in METADATA_FIELDS)))
         db.execute("DELETE FROM knowledge_chunks WHERE source_id=?", (source_id,))
         for heading, chunk in _chunks(content):
-            db.execute("INSERT INTO knowledge_chunks(id,source_id,persona,domain,heading,content) VALUES(?,?,?,?,?,?)", (str(uuid.uuid4()), source_id, persona, domain, heading, chunk))
+            db.execute("INSERT INTO knowledge_chunks(id,source_id,user_id,persona,domain,heading,content) VALUES(?,?,?,?,?,?,?)", (str(uuid.uuid4()), source_id, user_id, persona, domain, heading, chunk))
     return source_id
 
 
@@ -237,14 +238,17 @@ async def index_source(source_id: str) -> str:
     return "local_lexical"
 
 
-async def retrieve(query: str, mode: str, limit: int = 5) -> tuple[list[dict], str]:
+async def retrieve(query: str, context: PersonaContext, limit: int = 5) -> tuple[list[dict], str]:
+    mode = context.persona_id
+    if context.knowledge_namespace != f"{context.user_id}:{mode}":
+        raise ValueError("知识库命名空间与人格上下文不一致")
     persona = PERSONA_DOMAINS.get(mode)
     if not persona:
         return [], "disabled"
     with connect() as db:
-        rows = db.execute("SELECT c.id,c.domain,c.heading,c.content,c.embedding_json,s.title,s.source_path,s.source_type FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.persona=? ORDER BY c.id", (persona,)).fetchall()
+        rows = db.execute("SELECT c.id,c.domain,c.heading,c.content,c.embedding_json,s.title,s.source_path,s.source_type FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.user_id=? AND s.user_id=? AND c.persona=? AND s.persona=? ORDER BY c.id", (context.user_id, context.user_id, persona, persona)).fetchall()
     if not rows:
-        _log_search(mode, persona, query, "empty", [])
+        _log_search(context.user_id, mode, persona, query, "empty", [])
         return [], "empty"
     query_vectors = await _embed([query])
     qvector = query_vectors[0] if query_vectors else None
@@ -259,22 +263,22 @@ async def retrieve(query: str, mode: str, limit: int = 5) -> tuple[list[dict], s
     scored.sort(key=lambda item: item[0], reverse=True)
     selected = [{"score": round(score, 4), "domain": row["domain"], "heading": row["heading"], "title": row["title"], "source_path": row["source_path"], "source_type": row["source_type"], "content": row["content"]} for score, row in scored[:limit]]
     method = "ollama_embedding+local_lexical" if qvector and any(row["embedding_json"] for row in rows) else "local_lexical"
-    _log_search(mode, persona, query, method, selected)
+    _log_search(context.user_id, mode, persona, query, method, selected)
     return selected, method
 
 
-def _log_search(mode: str, persona: str, query: str, method: str, hits: list[dict]) -> None:
+def _log_search(user_id: str, mode: str, persona: str, query: str, method: str, hits: list[dict]) -> None:
     compact_hits = [{"title": item["title"], "domain": item["domain"], "score": item["score"]} for item in hits]
     with connect() as db:
-        db.execute("INSERT INTO knowledge_search_log(mode,persona,query,method,hits_json) VALUES(?,?,?,?,?)", (mode, persona, query, method, json.dumps(compact_hits, ensure_ascii=False)))
+        db.execute("INSERT INTO knowledge_search_log(user_id,mode,persona,query,method,hits_json) VALUES(?,?,?,?,?,?)", (user_id, mode, persona, query, method, json.dumps(compact_hits, ensure_ascii=False)))
 
 
-def list_search_hits(persona: str | None = None, limit: int = 100) -> list[dict]:
+def list_search_hits(persona: str | None = None, limit: int = 100, user_id: str = LOCAL_USER_ID) -> list[dict]:
     with connect() as db:
         if persona:
-            rows = db.execute("SELECT * FROM knowledge_search_log WHERE persona=? ORDER BY id DESC LIMIT ?", (persona, limit)).fetchall()
+            rows = db.execute("SELECT * FROM knowledge_search_log WHERE user_id=? AND persona=? ORDER BY id DESC LIMIT ?", (user_id, persona, limit)).fetchall()
         else:
-            rows = db.execute("SELECT * FROM knowledge_search_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            rows = db.execute("SELECT * FROM knowledge_search_log WHERE user_id=? ORDER BY id DESC LIMIT ?", (user_id, limit)).fetchall()
     result = [dict(row) for row in rows]
     for row in result:
         row["hits"] = json.loads(row.pop("hits_json"))

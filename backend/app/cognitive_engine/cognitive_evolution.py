@@ -1,9 +1,9 @@
 from datetime import date
 from ..db import connect
 
-def report(period: str='month') -> dict:
+def report(period: str='month', persona_id: str='anatomy', user_id: str='local') -> dict:
     with connect() as db:
-        rows=[dict(r) for r in db.execute("SELECT * FROM cognitive_evolution ORDER BY occurred_at DESC LIMIT 100").fetchall()]
+        rows=[dict(r) for r in db.execute("SELECT * FROM cognitive_evolution WHERE user_id=? AND persona_id=? ORDER BY occurred_at DESC LIMIT 100",(user_id,persona_id)).fetchall()]
     span=90 if period=='quarter' else 31
     cutoff=date.today().fromordinal(date.today().toordinal()-span).isoformat()
     selected=[r for r in rows if str(r['occurred_at'])[:10]>=cutoff]

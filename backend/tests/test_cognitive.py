@@ -17,9 +17,9 @@ def test_v3_migration_preserves_existing_data_and_is_idempotent(tmp_path: Path):
     migrate_cognitive(path)
     with sqlite3.connect(path) as db:
         assert db.execute("SELECT title FROM conversations WHERE id='legacy'").fetchone()[0]=='原有对话'
-        assert db.execute('SELECT MAX(version) FROM schema_version').fetchone()[0]==3
+        assert db.execute('SELECT MAX(version) FROM schema_version').fetchone()[0]==6
         assert db.execute("SELECT COUNT(*) FROM cognitive_settings").fetchone()[0]>=3
-    backup=path.with_name('eunoia.pre-v3-backup.sqlite3')
+    backup=path.with_name('eunoia.pre-cognitive-v6-backup.sqlite3')
     assert backup.exists()
     with sqlite3.connect(backup) as db:
         assert db.execute('PRAGMA integrity_check').fetchone()[0]=='ok'

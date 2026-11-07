@@ -3,6 +3,7 @@ from pathlib import Path
 
 from app.db import init_db
 from app import knowledge
+from app.persona_context import create_persona_context
 from fastapi.testclient import TestClient
 from app.main import app
 
@@ -15,11 +16,11 @@ def test_curated_knowledge_is_loaded_and_retrieval_is_persona_scoped(tmp_path, m
 
     sources = knowledge.list_sources()
     assert len(sources) == 43
-    results, method = asyncio.run(knowledge.retrieve("prospect theory loss aversion", "guidance"))
+    results, method = asyncio.run(knowledge.retrieve("prospect theory loss aversion", create_persona_context("guidance")))
     assert method == "local_lexical"
     assert results
     assert all("/sophia/" in row["source_path"].replace("\\", "/") for row in results)
-    wrong_space, _ = asyncio.run(knowledge.retrieve("prospect theory loss aversion", "anatomy"))
+    wrong_space, _ = asyncio.run(knowledge.retrieve("prospect theory loss aversion", create_persona_context("anatomy")))
     assert all("/evelyn/" in row["source_path"].replace("\\", "/") for row in wrong_space)
 
 
@@ -98,12 +99,12 @@ def test_lucien_and_felix_retrieval_uses_only_their_own_knowledge(tmp_path, monk
     init_db()
     knowledge.initialize_knowledge()
     monkeypatch.setattr(knowledge, "_embed", lambda texts: _no_embeddings())
-    lucien, _ = asyncio.run(knowledge.retrieve("叙事学 叙述视角 文学", "lucien"))
-    felix, _ = asyncio.run(knowledge.retrieve("模因传播 互联网文化", "felix"))
+    lucien, _ = asyncio.run(knowledge.retrieve("叙事学 叙述视角 文学", create_persona_context("lucien")))
+    felix, _ = asyncio.run(knowledge.retrieve("模因传播 互联网文化", create_persona_context("felix")))
     assert lucien and all("/lucien/" in row["source_path"].replace("\\", "/") for row in lucien)
     assert felix and all("/felix/" in row["source_path"].replace("\\", "/") for row in felix)
-    lucien_for_meme, _ = asyncio.run(knowledge.retrieve("网络模因 internet memes", "lucien"))
-    felix_for_poetry, _ = asyncio.run(knowledge.retrieve("诗歌理论 韵律", "felix"))
+    lucien_for_meme, _ = asyncio.run(knowledge.retrieve("网络模因 internet memes", create_persona_context("lucien")))
+    felix_for_poetry, _ = asyncio.run(knowledge.retrieve("诗歌理论 韵律", create_persona_context("felix")))
     assert all("/lucien/" in row["source_path"].replace("\\", "/") for row in lucien_for_meme)
     assert all("/felix/" in row["source_path"].replace("\\", "/") for row in felix_for_poetry)
 
