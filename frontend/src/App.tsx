@@ -1,24 +1,26 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
-import { BookOpen, Brain, ChevronDown, CircleHelp, Compass, Heart, Leaf, MessageCircle, Plus, Send, Settings2, ShieldCheck, Sparkles, Star, Trash2, X } from 'lucide-react'
+import { BookOpen, Brain, ChevronDown, CircleHelp, Coffee, Compass, Heart, Leaf, MessageCircle, Palette, Plus, Send, Settings2, ShieldCheck, Sparkles, Star, Trash2, X } from 'lucide-react'
 import MemoryEditor from './MemoryEditor'
 import CognitiveProfile from './CognitiveProfile'
 import KnowledgeManager from './KnowledgeManager'
 import './v4.css'
 
-type Mode = 'anatomy'|'debate'|'guidance'|'self_exploration'
+type Mode = 'anatomy'|'debate'|'guidance'|'self_exploration'|'lucien'|'felix'
 type DebateStyle = 'discussion'|'opposition'|'steelman'|'both_sides'
 type Conversation = { id: string; title: string; mode: Mode; preview?: string; favorite?: number|boolean }
 type Message = { id?: number|string; role: 'user'|'assistant'; content: string; analysis_json?: string|null }
 type Memory = { id: number; category: string; content: string; kind: string; confidence: number }
 
-const modes: { id: Mode; label: string; icon: typeof Heart; desc: string; welcome: string }[] = [
-  { id:'anatomy', label:'情感解剖', icon:Heart, desc:'温柔剖析情绪，探寻情感深处的真实。', welcome:'我想听见，你沉默背后的声音。' },
-  { id:'debate', label:'理性辩论', icon:Sparkles, desc:'以逻辑审视观点，以理性接近真相。', welcome:'质疑一切，唯独不放弃思考。' },
-  { id:'guidance', label:'生活指导', icon:Compass, desc:'洞察现实困境，寻找切实可行的出路。', welcome:'人生的答案，要自己走出来。' },
-  { id:'self_exploration', label:'自我探索', icon:Brain, desc:'向内探索自我，理解存在与成长。', welcome:'向内凝视，看见真实的自己。' },
+const modes: { id: Mode; label: string; persona: string; icon: typeof Heart; desc: string; welcome: string }[] = [
+  { id:'anatomy', label:'情感解剖', persona:'Evelyn', icon:Heart, desc:'温柔剖析情绪，探寻情感深处的真实。', welcome:'我想听见，你沉默背后的声音。' },
+  { id:'debate', label:'理性辩论', persona:'Arthur', icon:Sparkles, desc:'以逻辑审视观点，以理性接近真相。', welcome:'质疑一切，唯独不放弃思考。' },
+  { id:'guidance', label:'生活指导', persona:'Sophia', icon:Compass, desc:'洞察现实困境，寻找切实可行的出路。', welcome:'人生的答案，要自己走出来。' },
+  { id:'self_exploration', label:'自我探索', persona:'Iris', icon:Brain, desc:'向内探索自我，理解存在与成长。', welcome:'向内凝视，看见真实的自己。' },
+  { id:'lucien', label:'文学艺术', persona:'Lucien', icon:Palette, desc:'漫游文学与艺术，在作品中发现新的感受。', welcome:'作品不急着给出答案，它先让我们看见。' },
+  { id:'felix', label:'日常闲谈', persona:'Felix', icon:Coffee, desc:'聊聊兴趣、流行文化和今天遇见的小事。', welcome:'生活已经够复杂了，先聊点有意思的。' },
 ]
-const personaNames: Record<Mode,string> = { anatomy:'Evelyn', debate:'Arthur', guidance:'Sophia', self_exploration:'Iris' }
+const personaNames: Record<Mode,string> = { anatomy:'Evelyn', debate:'Arthur', guidance:'Sophia', self_exploration:'Iris', lucien:'Lucien', felix:'Felix' }
 const debateStyles: {id: DebateStyle; label: string}[] = [
   {id:'discussion',label:'正常讨论'}, {id:'opposition',label:'反方辩论'},
   {id:'steelman',label:'钢人论证'}, {id:'both_sides',label:'双方辩论'},
@@ -49,6 +51,7 @@ export default function App() {
   const [profileOpen,setProfileOpen] = useState(false)
   const [knowledgeOpen,setKnowledgeOpen] = useState(false)
   const currentMode = active?.mode || selectedMode
+  const currentSpace = modes.find(m=>m.id===currentMode) || modes[2]
   const activePersona = personaNames[currentMode] || 'Eunoia'
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -84,7 +87,7 @@ export default function App() {
     <aside className={`sidebar ${mobileNav?'sidebar-open':''}`}>
       <div className="brand"><div className="brand-mark"><span>e</span></div><div><strong>Eunoia</strong><small>倾听者</small></div><button className="icon-btn mobile-close" onClick={()=>setMobileNav(false)} aria-label="关闭"><X size={18}/></button></div>
       <button className="new-chat" onClick={startBlank}><Plus size={17}/> 新建对话 <span>⌘ N</span></button>
-      <div className="nav-label">四个人格空间</div>
+      <div className="nav-label">六个人格空间</div>
       <nav className="mode-nav">{modes.map(({id,label,icon:Icon,desc})=><button key={id} className={`nav-item ${currentMode===id?'selected':''}`} title={desc} onClick={()=>selectSpace(id)}><Icon size={17}/><span>{label}</span></button>)}</nav>
       <div className="nav-label advanced-label">自我理解</div>
       <button className="nav-item" onClick={()=>{setProfileOpen(true);setMobileNav(false)}}><Brain size={17}/><span>我的认知画像</span></button>
@@ -98,12 +101,12 @@ export default function App() {
       <div className={`conversation-area ${messages.length?'has-messages':''}`}>
         {messages.length===0?<section className="welcome">
           <div className="portrait-wrap"><img className="portrait-art" src="/eunoia-avatar.jpg" alt="Eunoia 白发形象"/><span className="online-ring"/></div>
-          <p className="eyebrow">一处留给自己的空间</p><h1>你好，我是 <em>{activePersona}</em></h1><p className="welcome-copy">{modes.find(m=>m.id===currentMode)?.welcome}</p>
+          <p className="eyebrow">一处留给自己的空间</p><h1>你好，我是 <em>{activePersona}</em></h1><p className="welcome-copy">{currentSpace.welcome}</p>
           <div className="space-grid">{modes.map(({id,label,icon:Icon,desc})=><button key={id} className={currentMode===id?'selected':''} onClick={()=>selectSpace(id)}><Icon size={18}/><strong>{label}</strong><span>{desc}</span></button>)}</div>
         </section>:<section className="thread">{messages.map((m,i)=><article key={m.id??i} className={`message ${m.role}`}><div className={`avatar ${m.role==='assistant'?'eunoia-avatar':'user-avatar'}`}>{m.role==='assistant'?<img src="/eunoia-avatar.jpg" alt=""/>:'你'}</div><div className="message-content"><div className="message-meta">{m.role==='assistant'?activePersona:'你'}<span>{m.role==='assistant'?'· 陪你一起看':'· 刚刚'}</span></div><div className="message-text">{m.content||<span className="typing"><i/><i/><i/></span>}</div></div></article>)}<div ref={bottomRef}/></section>}
         {error&&<div className="error-note"><CircleHelp size={16}/>{error}</div>}
       </div>
-      <div className="composer-wrap"><div className="composer">{currentMode==='debate'&&<div className="debate-styles" role="group" aria-label="辩论方式">{debateStyles.map(style=><button key={style.id} className={debateStyle===style.id?'active':''} aria-pressed={debateStyle===style.id} onClick={()=>setDebateStyle(style.id)}>{style.label}</button>)}</div>}<textarea ref={inputRef} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}}} placeholder={currentMode==='debate'?'提出一个观点或问题，选择讨论方式后开始…':'把此刻的感受，慢慢说给我听…'} rows={2} disabled={loading}/><div className="composer-tools"><div className="composer-hint"><span><Leaf size={14}/> 不需要组织好语言</span><button className={`report-toggle ${report?'active':''}`} onClick={()=>setReport(!report)} title="生成结构化情感分析报告"><Brain size={14}/>{report?'深度报告已开启':'深度分析'}</button></div><button className="send-btn" disabled={!input.trim()||loading} onClick={()=>send()} aria-label="发送"><Send size={16}/></button></div></div><div className="disclaimer">Eunoia 是自我探索工具，不替代专业心理支持。你的对话仅保存在本机。</div></div>
+      <div className="composer-wrap"><div className="composer">{currentMode==='debate'&&<div className="debate-styles" role="group" aria-label="辩论方式">{debateStyles.map(style=><button key={style.id} className={debateStyle===style.id?'active':''} aria-pressed={debateStyle===style.id} onClick={()=>setDebateStyle(style.id)}>{style.label}</button>)}</div>}<textarea ref={inputRef} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}}} placeholder={currentMode==='debate'?'提出一个观点或问题，选择讨论方式后开始…':currentMode==='lucien'?'想聊一部作品、一种艺术，或某段创作灵感…':currentMode==='felix'?'最近在看什么、玩什么，或者今天发生了什么？':'把此刻的感受，慢慢说给我听…'} rows={2} disabled={loading}/><div className="composer-tools"><div className="composer-hint"><span><Leaf size={14}/> 不需要组织好语言</span>{currentMode!=='lucien'&&currentMode!=='felix'&&<button className={`report-toggle ${report?'active':''}`} onClick={()=>setReport(!report)} title="生成结构化情感分析报告"><Brain size={14}/>{report?'深度报告已开启':'深度分析'}</button>}</div><button className="send-btn" disabled={!input.trim()||loading} onClick={()=>send()} aria-label="发送"><Send size={16}/></button></div></div><div className="disclaimer">Eunoia 是自我探索工具，不替代专业心理支持。你的对话仅保存在本机。</div></div>
     </main>
 
     {memOpen&&<div className="legacy-memory-backdrop-hidden" onMouseDown={e=>{if(e.target===e.currentTarget)setMemOpen(false)}}><section className="memory-modal"><header><div><span className="panel-kicker">仅保存在此设备</span><h2>记忆与隐私</h2></div><button className="icon-btn" onClick={()=>setMemOpen(false)} aria-label="关闭"><X size={18}/></button></header><div className="memory-switch-row"><div><strong>允许使用长期记忆</strong><p>仅使用你保存的内容理解上下文，不会自动推断永久特征。</p></div><button role="switch" aria-checked={memoryEnabled} className={`switch ${memoryEnabled?'on':''}`} onClick={()=>changeMemory(!memoryEnabled)}><i/></button></div><div className="memory-list-title">已保存的记忆 <span>{memories.length}</span></div><div className="memory-list">{memories.length?memories.map(m=><div className="memory-row" key={m.id}><div><span className="memory-category">{m.category} · {m.kind==='fact'?'事实':m.kind==='hypothesis'?'推测':'自述'} · {Math.round(m.confidence*100)}%</span><p>{m.content}</p></div><button className="icon-btn" title="删除记忆" onClick={async()=>{await api('/api/memories/'+m.id,{method:'DELETE'});refreshMemories()}}><Trash2 size={15}/></button></div>):<div className="memory-empty">目前没有保存的记忆。你可以通过本地 API 添加和管理它们。</div>}</div><div className="privacy-foot"><ShieldCheck size={15}/> 对话和记忆保存在本地 SQLite，不会发送到云端。</div></section></div>}

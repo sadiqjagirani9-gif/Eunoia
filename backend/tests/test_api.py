@@ -1,5 +1,7 @@
+import json
 from fastapi.testclient import TestClient
 
+from app import main as main_module
 from app.main import app
 
 
@@ -25,3 +27,62 @@ def test_local_conversation_and_memory_crud(tmp_path, monkeypatch):
 
         assert client.delete(f"/api/conversations/{conversation_id}").json()["deleted"] is True
         assert client.get(f"/api/conversations/{conversation_id}").status_code == 404
+
+
+def test_lucien_and_felix_chat_use_their_own_prompts_and_keep_histories_separate(tmp_path, monkeypatch):
+    monkeypatch.setenv("EUNOIA_DATA_DIR", str(tmp_path))
+    captured = []
+
+    class FakeResponse:
+        status_code = 200
+
+        async def aiter_lines(self):
+            yield json.dumps({"message": {"content": "本地回复"}})
+
+    class StreamContext:
+        async def __aenter__(self):
+            return FakeResponse()
+
+        async def __aexit__(self, *_):
+            return None
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        def stream(self, method, url, json):
+            captured.append(json)
+            return StreamContext()
+
+    async def no_references(query, mode):
+        return [], "empty"
+
+    monkeypatch.setattr(main_module.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(main_module.knowledge, "retrieve", no_references)
+    monkeypatch.setattr(main_module, "record_cognitive_observation", lambda *_: None)
+    with TestClient(app) as client:
+        saved = client.post("/api/memories", json={"category": "偏好", "content": "喜欢轻松交流", "kind": "self_report"})
+        assert saved.status_code == 200
+        client.put("/api/memories/enabled", json={"enabled": True})
+        ids = {}
+        for mode, wrong_request_mode, persona_name in (("lucien", "felix", "文学艺术探索者 Lucien"), ("felix", "lucien", "日常陪伴者 Felix")):
+            conversation = client.post("/api/conversations", json={"mode": mode}).json()
+            ids[mode] = conversation["id"]
+            response = client.post("/api/chat/stream", json={"conversation_id": conversation["id"], "mode": wrong_request_mode, "content": "聊聊今天"})
+            assert response.status_code == 200
+            assert "本地回复" in response.text
+            system_prompt = captured[-1]["messages"][0]["content"]
+            assert persona_name in system_prompt
+            assert "喜欢轻松交流" in system_prompt
+            assert ("Felix" not in system_prompt) if mode == "lucien" else ("Lucien" not in system_prompt)
+        for mode, conversation_id in ids.items():
+            history = client.get(f"/api/conversations/{conversation_id}").json()
+            assert history["conversation"]["mode"] == mode
+            assert [message["content"] for message in history["messages"]] == ["聊聊今天", "本地回复"]
+        assert client.get("/api/memories").json()["items"][0]["id"] == saved.json()["id"]

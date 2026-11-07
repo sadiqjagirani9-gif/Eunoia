@@ -53,5 +53,17 @@ def init_db() -> None:
             persona TEXT NOT NULL, domain TEXT NOT NULL, heading TEXT NOT NULL,
             content TEXT NOT NULL, embedding_json TEXT
         );
+        CREATE TABLE IF NOT EXISTS knowledge_source_metadata (
+            source_id TEXT PRIMARY KEY REFERENCES knowledge_sources(id) ON DELETE CASCADE,
+            creator TEXT NOT NULL DEFAULT '', source_url TEXT NOT NULL DEFAULT '', discipline TEXT NOT NULL DEFAULT '',
+            published TEXT NOT NULL DEFAULT '', source_version TEXT NOT NULL DEFAULT '', license TEXT NOT NULL DEFAULT '',
+            summary TEXT NOT NULL DEFAULT '', scope TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS knowledge_search_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, mode TEXT NOT NULL, persona TEXT NOT NULL,
+            query TEXT NOT NULL, method TEXT NOT NULL, hits_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
         INSERT OR IGNORE INTO settings(key, value) VALUES ('memory_enabled','0');
         """)

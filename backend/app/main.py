@@ -15,8 +15,8 @@ from urllib.parse import urlparse
 
 from .analysis import analyze
 from .db import connect, init_db
-from .persona import MODES, PERSONA, REPORT_INSTRUCTION
-from .personas import debate_instruction, normalize_mode, prompt_for
+from .persona import MODES, REPORT_INSTRUCTION
+from .personas import debate_instruction, normalize_mode, system_prompt_for
 from . import knowledge
 from .advanced import dual_analysis, graph_snapshot, save_graph, simulate
 from .profile.api import router as cognitive_router, observe as record_cognitive_observation, ObserveInput
@@ -85,6 +85,11 @@ class KnowledgeImport(BaseModel):
     content: str | None = Field(default=None, max_length=1500000)
     content_base64: str | None = Field(default=None, max_length=3000000)
     url: str | None = Field(default=None, max_length=2048)
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+class KnowledgeUpdate(BaseModel):
+    content: str = Field(min_length=1, max_length=1500000)
+    metadata: dict[str, str] = Field(default_factory=dict)
 
 class KnowledgeSearch(BaseModel):
     mode: str
@@ -116,6 +121,33 @@ async def models():
 @app.get("/api/knowledge/sources")
 def knowledge_sources():
     return {"sources": knowledge.list_sources(), "domains": {key: sorted(value) for key, value in knowledge.DOMAIN_LABELS.items()}, "embedding_model": knowledge.EMBEDDING_MODEL}
+
+
+@app.get("/api/knowledge/sources/{source_id}")
+def knowledge_source_detail(source_id: str):
+    source = knowledge.get_source(source_id)
+    if not source:
+        raise HTTPException(404, "知识来源不存在")
+    return {"source": source}
+
+
+@app.put("/api/knowledge/sources/{source_id}")
+async def update_knowledge_source(source_id: str, body: KnowledgeUpdate):
+    try:
+        source = knowledge.update_source(source_id, body.content, body.metadata)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not source:
+        raise HTTPException(404, "知识来源不存在或内置资料不可编辑")
+    await knowledge.index_source(source_id)
+    return {"source": source}
+
+
+@app.get("/api/knowledge/hits")
+def knowledge_hits(persona: str | None = None):
+    if persona and persona not in set(knowledge.DOMAIN_LABELS):
+        raise HTTPException(422, "人格无效")
+    return {"hits": knowledge.list_search_hits(persona)}
 
 
 @app.post("/api/knowledge/search")
@@ -159,7 +191,7 @@ async def knowledge_import(body: KnowledgeImport):
                 content = raw.decode("utf-8-sig")
         if not content:
             raise ValueError("请提供文本、PDF 文件或 HTTPS 网页地址")
-        source = knowledge.import_text(body.persona, body.domain, name, content, source_type)
+        source = knowledge.import_text(body.persona, body.domain, name, content, source_type, body.metadata)
         method = await knowledge.index_source(source["id"])
         return {"source": source, "index_method": method}
     except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
@@ -341,7 +373,7 @@ async def chat_stream(body: ChatRequest):
         pass
     with connect() as db:
         db.execute("INSERT INTO emotional_states(id,person_id,emotions_json,intensity,source_type,confidence,conversation_id) VALUES(?,?,?,?,?,?,?)", (str(uuid.uuid4()), 'user', json.dumps(signal.get('emotions', []), ensure_ascii=False), min(1.0, 0.25 + 0.15 * len(signal.get('emotions', []))), 'user_report', 0.8, body.conversation_id))
-    system = PERSONA + "\n\n" + prompt_for(mode)
+    system = system_prompt_for(mode)
     if mode == "debate":
         system += "\n\n当次讨论策略：" + debate_instruction(body.debate_style)
     try:

@@ -1,14 +1,25 @@
-from app.personas import DEBATE_STYLES, SPACE_PROMPTS, debate_instruction, normalize_mode, prompt_for
+from app.personas import DEBATE_STYLES, SPACE_PROMPTS, debate_instruction, normalize_mode, prompt_for, system_prompt_for
 
 
-def test_four_spaces_have_separate_prompt_files_and_distinct_frameworks():
+def test_six_spaces_have_separate_prompt_files_and_distinct_frameworks():
     prompts = {mode: prompt_for(mode) for mode in SPACE_PROMPTS}
-    assert len({path.resolve() for path in SPACE_PROMPTS.values()}) == 4
-    assert len(set(prompts.values())) == 4
+    assert len({path.resolve() for path in SPACE_PROMPTS.values()}) == 6
+    assert len(set(prompts.values())) == 6
     assert "情绪" in prompts["anatomy"]
     assert "证据" in prompts["debate"]
     assert "行动" in prompts["guidance"]
     assert "自我叙事" in prompts["self_exploration"]
+    assert "文学艺术探索者 Lucien" in prompts["lucien"]
+    assert "哲学讨论" in prompts["lucien"]
+    assert "日常陪伴者 Felix" in prompts["felix"]
+    assert "认真倾听" in prompts["felix"]
+
+
+def test_new_persona_system_prompts_do_not_inherit_emotional_mentor_prompt():
+    assert "情感导师" not in system_prompt_for("lucien")
+    assert "情感导师" not in system_prompt_for("felix")
+    assert "文学艺术探索者 Lucien" in system_prompt_for("lucien")
+    assert "日常陪伴者 Felix" in system_prompt_for("felix")
 
 
 def test_legacy_conversation_modes_remain_readable():

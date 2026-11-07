@@ -25,4 +25,22 @@
 .knowledge-error{background:#fbf1ee;color:#946c65}
 .knowledge-status{background:#edf3ed;color:#6c826e}
 .knowledge-modal footer{padding-top:11px;color:#aaa4aa;font-size:9px}
-@media(max-width:560px){.knowledge-modal{padding:17px}.knowledge-controls{grid-template-columns:1fr}.knowledge-list{max-height:260px}.knowledge-web button{padding:0 6px}}
+.knowledge-metadata{margin:8px 0;color:#746d76;font-size:10px}
+.knowledge-metadata summary{cursor:pointer;padding:7px 0}
+.knowledge-meta-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:8px 0}
+.knowledge-meta-grid label,.knowledge-content-edit{display:grid;gap:4px;color:#89828b;font-size:9px}
+.knowledge-meta-grid input,.knowledge-meta-grid textarea,.knowledge-content-edit textarea{width:100%;min-width:0;padding:7px;border:1px solid #e9e5e7;border-radius:4px;background:#fff;color:#56515a;font:inherit;font-size:10px;resize:vertical}
+.knowledge-meta-grid label:nth-last-child(-n+3){grid-column:1/-1}
+.knowledge-hits,.knowledge-detail{margin:10px 0;padding:10px;border:1px solid #e9e5e7;border-radius:5px;background:#fff}
+.knowledge-hits>header,.knowledge-detail>header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.knowledge-hits>header strong,.knowledge-detail>header strong{color:#5f5962;font-size:11px;font-weight:600}
+.knowledge-hits>header small,.knowledge-detail>header small{display:block;margin-top:3px;color:#99929a;font-size:9px}
+.knowledge-hits article{padding:8px 0;border-bottom:1px solid #f0edef}
+.knowledge-hits article:last-child{border-bottom:0}
+.knowledge-hits article span,.knowledge-hits article small,.knowledge-hits>p{color:#99929a;font-size:9px}
+.knowledge-hits article p{margin:4px 0;color:#625c65;font-size:10px;overflow-wrap:anywhere}
+.knowledge-detail>a{display:inline-flex;align-items:center;gap:5px;margin:9px 0;color:#796c83;font-size:10px;text-decoration:none}
+.knowledge-content-edit{margin:8px 0}
+.knowledge-save{display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:0 10px;border:1px solid #e2dce4;border-radius:4px;background:#f8f5f8;color:#6e6376;font-size:10px;cursor:pointer}
+.knowledge-save:disabled{opacity:.55;cursor:wait}
+@media(max-width:560px){.knowledge-modal{padding:17px}.knowledge-controls{grid-template-columns:1fr}.knowledge-list{max-height:260px}.knowledge-web button{padding:0 6px}.knowledge-meta-grid{grid-template-columns:1fr}.knowledge-meta-grid label:nth-last-child(-n+3){grid-column:auto}}

@@ -14,10 +14,16 @@ from urllib.parse import urlparse
 
 import httpx
 
-from .db import connect
+from .db import connect, database_path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 KNOWLEDGE_ROOT = PROJECT_ROOT / "knowledge_base"
+
+
+def import_root() -> Path:
+    return database_path().parent / "knowledge"
+
+
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 EMBEDDING_MODEL = os.environ.get("EUNOIA_EMBEDDING_MODEL", "nomic-embed-text")
 PERSONA_DOMAINS = {
@@ -25,12 +31,16 @@ PERSONA_DOMAINS = {
     "debate": "arthur",
     "guidance": "sophia",
     "self_exploration": "iris",
+    "lucien": "lucien",
+    "felix": "felix",
 }
 DOMAIN_LABELS = {
     "evelyn": {"general_psychology", "psychoanalysis", "emotion_psychology", "attachment_theory", "social_psychology", "relationship_psychology", "cognitive_behavioral_theory"},
     "arthur": {"formal_logic", "informal_logic", "epistemology", "philosophy_of_science", "ethics", "political_philosophy", "philosophy_history"},
     "sophia": {"behavioral_science", "behavioral_economics", "decision_theory", "sociology", "management", "educational_psychology", "career_development"},
     "iris": {"personality_psychology", "cognitive_science", "developmental_psychology", "self_identity", "existentialism", "phenomenology", "self_determination_theory"},
+    "lucien": {"literature", "poetry", "art_history", "visual_arts", "music", "film_drama", "aesthetics"},
+    "felix": {"humor_theory", "linguistics", "internet_culture", "popular_culture", "games_entertainment", "social_psychology", "daily_knowledge", "conversation_cases"},
 }
 
 
@@ -68,7 +78,18 @@ def _source_meta(path: Path) -> tuple[str, str, str]:
     return persona, domain, title
 
 
-def _store_source(source_path: str, persona: str, domain: str, title: str, content: str, source_type: str) -> str:
+METADATA_FIELDS = ("creator", "source_url", "discipline", "published", "source_version", "license", "summary", "scope", "notes")
+
+
+def _source_metadata(path: Path) -> dict:
+    sidecar = path.with_suffix(path.suffix + ".meta.json")
+    if not sidecar.is_file():
+        return {}
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
+    return {field: str(data.get(field, "")) for field in METADATA_FIELDS}
+
+
+def _store_source(source_path: str, persona: str, domain: str, title: str, content: str, source_type: str, metadata: dict | None = None) -> str:
     if not content.strip():
         raise ValueError("知识内容不能为空")
     checksum = _digest(content)
@@ -76,8 +97,14 @@ def _store_source(source_path: str, persona: str, domain: str, title: str, conte
         old = db.execute("SELECT id,checksum FROM knowledge_sources WHERE source_path=?", (source_path,)).fetchone()
         source_id = old["id"] if old else str(uuid.uuid4())
         if old and old["checksum"] == checksum:
+            if metadata is not None:
+                values = {field: str(metadata.get(field, "")) for field in METADATA_FIELDS}
+                db.execute("INSERT INTO knowledge_source_metadata(source_id,creator,source_url,discipline,published,source_version,license,summary,scope,notes) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET creator=excluded.creator,source_url=excluded.source_url,discipline=excluded.discipline,published=excluded.published,source_version=excluded.source_version,license=excluded.license,summary=excluded.summary,scope=excluded.scope,notes=excluded.notes,updated_at=CURRENT_TIMESTAMP", (source_id, *(values[field] for field in METADATA_FIELDS)))
             return source_id
         db.execute("INSERT INTO knowledge_sources(id,persona,domain,title,source_path,source_type,content,checksum) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(source_path) DO UPDATE SET persona=excluded.persona,domain=excluded.domain,title=excluded.title,source_type=excluded.source_type,content=excluded.content,checksum=excluded.checksum,updated_at=CURRENT_TIMESTAMP", (source_id, persona, domain, title, source_path, source_type, content, checksum))
+        if metadata is not None:
+            values = {field: str(metadata.get(field, "")) for field in METADATA_FIELDS}
+            db.execute("INSERT INTO knowledge_source_metadata(source_id,creator,source_url,discipline,published,source_version,license,summary,scope,notes) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET creator=excluded.creator,source_url=excluded.source_url,discipline=excluded.discipline,published=excluded.published,source_version=excluded.source_version,license=excluded.license,summary=excluded.summary,scope=excluded.scope,notes=excluded.notes,updated_at=CURRENT_TIMESTAMP", (source_id, *(values[field] for field in METADATA_FIELDS)))
         db.execute("DELETE FROM knowledge_chunks WHERE source_id=?", (source_id,))
         for heading, chunk in _chunks(content):
             db.execute("INSERT INTO knowledge_chunks(id,source_id,persona,domain,heading,content) VALUES(?,?,?,?,?,?)", (str(uuid.uuid4()), source_id, persona, domain, heading, chunk))
@@ -86,6 +113,45 @@ def _store_source(source_path: str, persona: str, domain: str, title: str, conte
 
 def initialize_knowledge() -> None:
     KNOWLEDGE_ROOT.mkdir(parents=True, exist_ok=True)
+    private_root = import_root().resolve()
+    legacy_root = KNOWLEDGE_ROOT.resolve()
+    moved_files: list[Path] = []
+    with connect() as db:
+        imported = db.execute(
+            "SELECT id,persona,domain,title,source_path,content FROM knowledge_sources WHERE source_type!='curated'"
+        ).fetchall()
+        for row in imported:
+            if row["persona"] not in DOMAIN_LABELS or row["domain"] not in DOMAIN_LABELS[row["persona"]]:
+                continue
+            recorded_path = Path(row["source_path"])
+            old_path = recorded_path.resolve()
+            if old_path == legacy_root or legacy_root not in old_path.parents or not recorded_path.is_file() or recorded_path.is_symlink():
+                continue
+            target_dir = (private_root / row["persona"] / row["domain"]).resolve()
+            if private_root not in target_dir.parents:
+                continue
+            target_dir.mkdir(parents=True, exist_ok=True)
+            content = recorded_path.read_text(encoding="utf-8")
+            source_key = hashlib.sha256(row["id"].encode("utf-8")).hexdigest()[:16]
+            target = target_dir / f"{source_key}_{recorded_path.name}"
+            if target.exists() and target.read_text(encoding="utf-8") != content:
+                content_key = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
+                target = target_dir / f"{source_key}_{content_key}_{recorded_path.name}"
+            if private_root not in target.resolve().parents:
+                continue
+            if target.exists() and target.read_text(encoding="utf-8") != content:
+                continue
+            if not target.exists():
+                temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+                temporary.write_text(content, encoding="utf-8")
+                temporary.replace(target)
+            db.execute("UPDATE knowledge_sources SET source_path=? WHERE id=?", (str(target.resolve()), row["id"]))
+            moved_files.append(recorded_path)
+    for old_path in moved_files:
+        try:
+            old_path.unlink(missing_ok=True)
+        except OSError:
+            pass
     indexed_paths = {str(path.resolve()) for path in KNOWLEDGE_ROOT.glob("*/*/*.md")}
     with connect() as db:
         for row in db.execute("SELECT id,source_path FROM knowledge_sources WHERE source_type='curated'").fetchall():
@@ -98,8 +164,8 @@ def initialize_knowledge() -> None:
             persona, domain, title = _source_meta(path)
             if persona not in DOMAIN_LABELS or domain not in DOMAIN_LABELS[persona]:
                 continue
-            _store_source(str(path.resolve()), persona, domain, title, path.read_text(encoding="utf-8"), "curated")
-        except (OSError, ValueError):
+            _store_source(str(path.resolve()), persona, domain, title, path.read_text(encoding="utf-8"), "curated", _source_metadata(path))
+        except (OSError, ValueError, json.JSONDecodeError):
             continue
 
 
@@ -178,6 +244,7 @@ async def retrieve(query: str, mode: str, limit: int = 5) -> tuple[list[dict], s
     with connect() as db:
         rows = db.execute("SELECT c.id,c.domain,c.heading,c.content,c.embedding_json,s.title,s.source_path,s.source_type FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id WHERE c.persona=? ORDER BY c.id", (persona,)).fetchall()
     if not rows:
+        _log_search(mode, persona, query, "empty", [])
         return [], "empty"
     query_vectors = await _embed([query])
     qvector = query_vectors[0] if query_vectors else None
@@ -191,19 +258,64 @@ async def retrieve(query: str, mode: str, limit: int = 5) -> tuple[list[dict], s
             scored.append((score, row))
     scored.sort(key=lambda item: item[0], reverse=True)
     selected = [{"score": round(score, 4), "domain": row["domain"], "heading": row["heading"], "title": row["title"], "source_path": row["source_path"], "source_type": row["source_type"], "content": row["content"]} for score, row in scored[:limit]]
-    return selected, "ollama_embedding+local_lexical" if qvector and any(row["embedding_json"] for row in rows) else "local_lexical"
+    method = "ollama_embedding+local_lexical" if qvector and any(row["embedding_json"] for row in rows) else "local_lexical"
+    _log_search(mode, persona, query, method, selected)
+    return selected, method
+
+
+def _log_search(mode: str, persona: str, query: str, method: str, hits: list[dict]) -> None:
+    compact_hits = [{"title": item["title"], "domain": item["domain"], "score": item["score"]} for item in hits]
+    with connect() as db:
+        db.execute("INSERT INTO knowledge_search_log(mode,persona,query,method,hits_json) VALUES(?,?,?,?,?)", (mode, persona, query, method, json.dumps(compact_hits, ensure_ascii=False)))
+
+
+def list_search_hits(persona: str | None = None, limit: int = 100) -> list[dict]:
+    with connect() as db:
+        if persona:
+            rows = db.execute("SELECT * FROM knowledge_search_log WHERE persona=? ORDER BY id DESC LIMIT ?", (persona, limit)).fetchall()
+        else:
+            rows = db.execute("SELECT * FROM knowledge_search_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    result = [dict(row) for row in rows]
+    for row in result:
+        row["hits"] = json.loads(row.pop("hits_json"))
+    return result
 
 
 def list_sources() -> list[dict]:
     with connect() as db:
-        return [dict(row) for row in db.execute("SELECT id,persona,domain,title,source_path,source_type,updated_at,(SELECT COUNT(*) FROM knowledge_chunks c WHERE c.source_id=s.id) chunks FROM knowledge_sources s ORDER BY persona,domain,title").fetchall()]
+        return [dict(row) for row in db.execute("SELECT s.id,s.persona,s.domain,s.title,s.source_path,s.source_type,s.updated_at,(SELECT COUNT(*) FROM knowledge_chunks c WHERE c.source_id=s.id) chunks,m.creator,m.source_url,m.discipline,m.published,m.source_version,m.license,m.summary,m.scope,m.notes FROM knowledge_sources s LEFT JOIN knowledge_source_metadata m ON m.source_id=s.id ORDER BY s.persona,s.domain,s.title").fetchall()]
 
 
-def import_text(persona: str, domain: str, name: str, content: str, source_type: str = "imported") -> dict:
+def get_source(source_id: str) -> dict | None:
+    with connect() as db:
+        row = db.execute("SELECT s.*,m.creator,m.source_url,m.discipline,m.published,m.source_version,m.license,m.summary,m.scope,m.notes FROM knowledge_sources s LEFT JOIN knowledge_source_metadata m ON m.source_id=s.id WHERE s.id=?", (source_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def update_source(source_id: str, content: str, metadata: dict | None = None) -> dict | None:
+    source = get_source(source_id)
+    if not source or source["source_type"] == "curated":
+        return None
+    recorded_path = Path(source["source_path"])
+    path = recorded_path.resolve()
+    root = import_root().resolve()
+    if root not in path.parents or recorded_path.is_symlink():
+        raise ValueError("只允许更新本机导入的知识资料")
+    if not content.strip():
+        raise ValueError("知识内容不能为空")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temporary.write_text(content, encoding="utf-8")
+    temporary.replace(path)
+    _store_source(str(path), source["persona"], source["domain"], source["title"], content, source["source_type"], metadata)
+    return get_source(source_id)
+
+
+def import_text(persona: str, domain: str, name: str, content: str, source_type: str = "imported", metadata: dict | None = None) -> dict:
     if persona not in DOMAIN_LABELS or domain not in DOMAIN_LABELS[persona]:
         raise ValueError("人格或知识领域无效")
     safe_name = re.sub(r"[^\w.\-\u3400-\u9fff]+", "_", Path(name).name).strip("._") or "imported.md"
-    folder = KNOWLEDGE_ROOT / persona / domain
+    folder = import_root() / persona / domain
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / safe_name
     if target.suffix.lower() not in {".md", ".txt"}:
@@ -213,7 +325,7 @@ def import_text(persona: str, domain: str, name: str, content: str, source_type:
     if target.exists() and occupied and occupied["source_type"] == "curated":
         target = folder / f"imported_{uuid.uuid4().hex[:8]}_{target.name}"
     target.write_text(content, encoding="utf-8")
-    source_id = _store_source(str(target.resolve()), persona, domain, safe_name, content, source_type)
+    source_id = _store_source(str(target.resolve()), persona, domain, safe_name, content, source_type, metadata)
     return next(item for item in list_sources() if item["id"] == source_id)
 
 
@@ -223,7 +335,8 @@ def delete_source(source_id: str) -> bool:
         if not row:
             return False
         path = Path(row["source_path"]).resolve()
-        with_root = path == KNOWLEDGE_ROOT.resolve() or KNOWLEDGE_ROOT.resolve() in path.parents
+        managed_root = import_root().resolve()
+        with_root = path == managed_root or managed_root in path.parents
         db.execute("DELETE FROM knowledge_sources WHERE id=?", (source_id,))
     if with_root and path.is_file():
         path.unlink()

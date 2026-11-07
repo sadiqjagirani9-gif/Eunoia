@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from .persona import PERSONA
+
 PROMPT_DIR = Path(__file__).with_name("persona_prompts")
 
 SPACE_PROMPTS = {
@@ -7,6 +9,8 @@ SPACE_PROMPTS = {
     "debate": PROMPT_DIR / "rational_debate.txt",
     "guidance": PROMPT_DIR / "life_guidance.txt",
     "self_exploration": PROMPT_DIR / "self_exploration.txt",
+    "lucien": PROMPT_DIR / "literary_arts.txt",
+    "felix": PROMPT_DIR / "everyday_chat.txt",
 }
 
 SPACE_LABELS = {
@@ -14,6 +18,8 @@ SPACE_LABELS = {
     "debate": "理性辩论",
     "guidance": "生活指导",
     "self_exploration": "自我探索",
+    "lucien": "文学艺术",
+    "felix": "日常闲谈",
 }
 
 DEBATE_STYLES = {
@@ -44,3 +50,11 @@ def normalize_mode(mode: str | None) -> str:
 
 def prompt_for(mode: str) -> str:
     return SPACE_PROMPTS[normalize_mode(mode)].read_text(encoding="utf-8").strip()
+
+
+def system_prompt_for(mode: str) -> str:
+    normalized = normalize_mode(mode)
+    prompt = prompt_for(normalized)
+    if normalized in {"lucien", "felix"}:
+        return prompt
+    return PERSONA + "\n\n" + prompt

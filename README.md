@@ -33,13 +33,13 @@ The app binds to localhost and sends chat and retrieval requests only to the loc
 
 ## V4 四个人格空间
 
-侧栏提供情感解剖、理性辩论、生活指导和自我探索四个独立空间。每个空间使用独立的本地 system prompt 文件，拥有不同的思维框架、回答结构和提问策略；情感解剖由 Evelyn 人格负责，理性辩论由 Arthur 人格负责。理性辩论输入区可选择正常讨论、反方辩论、钢人论证或双方辩论。历史会话会固定在创建时的空间。旧会话和消息保留，并将旧模式映射到最接近的新空间。历史对话支持收藏、取消收藏和删除。主页不展示情绪侧栏和示例话题卡，认知功能入口仅保留可编辑的“我的认知画像”。
+侧栏提供 Evelyn（情感解剖）、Arthur（理性辩论）、Sophia（生活指导）、Iris（自我探索）、Lucien（文学艺术）和 Felix（日常闲谈）六个独立空间。每个空间使用独立的本地 system prompt 文件，历史会话固定在创建时的空间。Lucien 以文学、艺术、音乐、电影和美学交流为主；Felix 擅长轻松日常对话，避免主动心理分析。两者使用各自隔离的知识检索领域，但沿用同一 SQLite/RAG 架构；长期记忆继续沿用现有设置和管理方式。旧会话和消息保留，并将旧模式映射到最接近的新空间。历史对话支持收藏、取消收藏和删除。主页不展示情绪侧栏和示例话题卡，认知功能入口仅保留可编辑的“我的认知画像”。
 
 ## 本地专业知识库
 
-`knowledge_base/` 含 Evelyn、Arthur、Sophia、Iris 四个空间各自的七个知识领域。每份种子资料按理论/研究名称、提出者、历史背景、概念、观点、研究、经典文献、适用范围、局限、案例、关联理论和参考文献组织，并标注理论的实证、争议、历史或哲学性质。对话检索严格按当前空间隔离，并把本地资料作为上下文交给 Ollama；模型被要求只引用检索到的出处，不编造研究。
+`knowledge_base/` 为六个人格维护独立领域。Lucien 的文学、诗歌、艺术史、视觉艺术、音乐、电影戏剧、美学资料分别位于 `knowledge_base/lucien/`；Felix 的幽默理论、语言学、网络文化、流行文化、游戏娱乐、社会心理、日常知识和原创对话案例位于 `knowledge_base/felix/`。新资料为带来源元数据的项目自写摘要或原创案例，不冒充下载的原文；每个 `.md.meta.json` 记录作者/机构、来源链接、学科、版本、许可、摘要、适用范围和处理说明。许可未确认的来源只保存书目信息与自写摘要，不复制正文。对话检索严格按当前空间隔离，并把本地资料作为上下文交给 Ollama；模型被要求只引用检索到的出处，不编造研究。
 
-知识库页面可导入 PDF、TXT、Markdown 或公开 HTTPS 网页，更新同名导入文件，删除来源并重建索引。SQLite 保存来源和分块元数据。默认向量模型为 `nomic-embed-text`；要启用语义向量检索，运行 `ollama pull nomic-embed-text` 后在页面选择“重建索引”。没有该模型时仍可使用本地词项检索，页面会显示实际检索方式。可用 `EUNOIA_EMBEDDING_MODEL` 指定其他兼容 Ollama `/api/embed` 的本地模型。PDF 文本提取由本地 `pypdf` 依赖完成。
+知识库页面可按人格与领域查看来源、打开详情、更新/删除用户导入资料、查看本地检索命中并重建索引。导入格式为 PDF、TXT、Markdown 和公开 HTTPS 网页；EPUB 尚不支持。SQLite 保存来源、许可元数据、分块和检索命中记录；导入的原始文件保存在 `%LOCALAPPDATA%\Eunoia\knowledge`（或 `EUNOIA_DATA_DIR\knowledge`），不进入 Git 项目目录。升级时会将旧版本保存在项目 `knowledge_base` 下的导入文件迁到该本地目录，并保留已有来源 ID、分块和向量。默认向量模型为 `nomic-embed-text`；运行 `ollama pull nomic-embed-text` 后在页面选择“重建索引”启用语义检索。没有该模型时仍可使用本地词项检索，页面会显示实际检索方式。可用 `EUNOIA_EMBEDDING_MODEL` 指定其他兼容 Ollama `/api/embed` 的本地模型。PDF 文本提取由本地 `pypdf` 依赖完成。
 
 ## Development
 
