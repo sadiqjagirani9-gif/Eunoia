@@ -5,19 +5,17 @@ from typing import Any
 import httpx
 
 from .db import connect
+from . import model_config, llm
 
-OLLAMA_URL = os.environ.get('OLLAMA_URL', 'http://127.0.0.1:11434')
-DEFAULT_MODEL = os.environ.get('EUNOIA_MODEL', 'qwen2.5:7b')
 
 EMPATHETIC = """你是温柔导师。只关注用户的情绪体验、深层需求、害怕什么、未表达的感受和内在矛盾。先理解再分析，不诊断，不把推测当事实。"""
 RATIONAL = """你是理性观察者。只关注可验证事实、行为、证据、现实限制、认知偏差和可行方案。明确区分事实、用户解释和未知；不为了安慰而改变判断，不臆测他人动机。"""
 
-async def _ask(system: str, prompt: str, model: str | None = None) -> str:
-    payload = {'model': model or DEFAULT_MODEL, 'stream': False, 'messages': [{'role':'system','content':system}, {'role':'user','content':prompt}]}
-    async with httpx.AsyncClient(timeout=180) as client:
-        response = await client.post(f'{OLLAMA_URL}/api/chat', json=payload)
-        response.raise_for_status()
-        return response.json().get('message', {}).get('content', '')
+async def _ask(system: str, prompt: str, model: str | None = None, persona: str = 'anatomy') -> str:
+    config = model_config.resolve(persona)
+    if not config:
+        raise ValueError(f"{persona} 尚未配置模型")
+    return await llm.complete_chat(config, [{'role':'system','content':system}, {'role':'user','content':prompt}])
 
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
@@ -44,10 +42,10 @@ async def dual_analysis(text: str, model: str | None = None) -> dict:
         observations=db.execute("SELECT dimension,statement,confidence_level FROM cognitive_observations WHERE status IN ('confirmed','partially_confirmed') ORDER BY updated_at DESC LIMIT 10").fetchall() if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cognitive_observations'").fetchone() else []
     context='\n'.join(f"[{r['dimension']} / {r['confidence_level']}] {r['statement']}" for r in observations)
     if context:text=f"用户已确认的可修正观察（只作上下文）：\n{context}\n\n当前情境：\n{text}"
-    facts = await _ask('提取事件事实。只列出用户明确描述的行为、人物和时间，不解释动机。', text, model)
-    mentor = await _ask(EMPATHETIC, f'事件事实：\n{facts}\n\n用户原话：\n{text}\n\n输出温柔导师分析。', model)
-    observer = await _ask(RATIONAL, f'事件事实：\n{facts}\n\n用户原话：\n{text}\n\n输出理性观察者分析。', model)
-    synthesis = await _ask('你是综合编辑。比较两种分析的分歧，保留情绪事实和逻辑限制，不能把可能性写成定论。', f'事实：{facts}\n温柔导师：{mentor}\n理性观察者：{observer}\n输出观点冲突、综合判断、一个值得思考的问题。', model)
+    facts = await _ask('提取事件事实。只列出用户明确描述的行为、人物和时间，不解释动机。', text, model, 'anatomy')
+    mentor = await _ask(EMPATHETIC, f'事件事实：\n{facts}\n\n用户原话：\n{text}\n\n输出温柔导师分析。', model, 'anatomy')
+    observer = await _ask(RATIONAL, f'事件事实：\n{facts}\n\n用户原话：\n{text}\n\n输出理性观察者分析。', model, 'debate')
+    synthesis = await _ask('你是综合编辑。比较两种分析的分歧，保留情绪事实和逻辑限制，不能把可能性写成定论。', f'事实：{facts}\n温柔导师：{mentor}\n理性观察者：{observer}\n输出观点冲突、综合判断、一个值得思考的问题。', model, 'anatomy')
     with connect() as db:
         db.execute("INSERT INTO analysis_reports(id,report_type,content_json) VALUES(?,?,?)", (str(uuid.uuid4()), 'dual_perspective', _json({'facts':facts,'empathetic':mentor,'rational':observer,'synthesis':synthesis})))
     return {'facts':facts,'empathetic':mentor,'rational':observer,'synthesis':synthesis}
@@ -58,7 +56,7 @@ async def simulate(text: str, model: str | None = None) -> dict:
     context='\n'.join(f"[{r['dimension']}] {r['statement']}" for r in observations)
     if context:text=f"长期背景（用户确认的观察，非事实定论）：\n{context}\n\n反事实情境：\n{text}"
     instruction = "建立三条反事实路径：A 原有选择，B 替代选择一，C 替代选择二。每条包含 choice、short_term、mid_term、long_term、gains、costs、uncertainties。禁止精确概率，明确区分事实、推断、假设。只返回 JSON 对象，字段为 branches 数组。"
-    raw = await _ask(instruction, text, model)
+    raw = await _ask(instruction, text, model, 'guidance')
     try:
         result = json.loads(raw[raw.find('{'):raw.rfind('}')+1])
     except (ValueError, TypeError):

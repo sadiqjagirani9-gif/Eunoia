@@ -14,14 +14,6 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" set "PATH=%LOCALAPPDATA%\Programs\Ollama;%PATH%"
-where ollama >nul 2>nul
-if errorlevel 1 (
-  echo Ollama was not found. Install Ollama for Windows, then run: ollama pull qwen2.5:7b
-  pause
-  exit /b 1
-)
-
 if not exist .venv\Scripts\python.exe py -3.11 -m venv .venv
 if not exist .venv\Scripts\python.exe (
   echo Python 3.11 is required to create the virtual environment.

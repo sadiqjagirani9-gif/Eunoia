@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
-import { BookOpen, Brain, ChevronDown, CircleHelp, Coffee, Compass, Heart, Leaf, MessageCircle, Palette, Plus, Send, Settings2, ShieldCheck, Sparkles, Star, Trash2, X } from 'lucide-react'
+import { BookOpen, Brain, CircleHelp, Coffee, Compass, Heart, Leaf, MessageCircle, Palette, Plus, Send, Settings2, ShieldCheck, Sparkles, Star, Trash2, X } from 'lucide-react'
 import MemoryEditor from './MemoryEditor'
 import CognitiveProfile from './CognitiveProfile'
 import KnowledgeManager from './KnowledgeManager'
+import ModelManager from './ModelManager'
 import './v4.css'
 
 type Mode = 'anatomy'|'debate'|'guidance'|'self_exploration'|'lucien'|'felix'
@@ -37,8 +38,8 @@ export default function App() {
   const [selectedMode,setSelectedMode] = useState<Mode>('guidance')
   const [messages,setMessages] = useState<Message[]>([])
   const [input,setInput] = useState('')
-  const [models,setModels] = useState<string[]>([])
-  const [model,setModel] = useState('')
+  const [modelReady,setModelReady] = useState(false)
+  const [hasAnyModel,setHasAnyModel] = useState(false)
   const [online,setOnline] = useState(false)
   const [loading,setLoading] = useState(false)
   const [report,setReport] = useState(false)
@@ -50,6 +51,7 @@ export default function App() {
   const [mobileNav,setMobileNav] = useState(false)
   const [profileOpen,setProfileOpen] = useState(false)
   const [knowledgeOpen,setKnowledgeOpen] = useState(false)
+  const [modelManagerOpen,setModelManagerOpen] = useState(false)
   const currentMode = active?.mode || selectedMode
   const currentSpace = modes.find(m=>m.id===currentMode) || modes[2]
   const activePersona = personaNames[currentMode] || 'Eunoia'
@@ -58,7 +60,9 @@ export default function App() {
 
   const refresh = async () => { try { setConversations(await api<Conversation[]>('/api/conversations')) } catch { /* backend may still be starting */ } }
   const refreshMemories = async () => { try { const m=await api<{enabled:boolean;items:Memory[]}>('/api/memories');setMemoryEnabled(m.enabled);setMemories(m.items) } catch { /* backend may still be starting */ } }
-  useEffect(()=>{ refresh(); refreshMemories(); api<{models:string[];default:string}>('/api/models').then(v=>{setModels(v.models);setModel(v.default);setOnline(true)}).catch(()=>setOnline(false)); const timer=setInterval(()=>api<{status:string;ollama:string}>('/api/health').then(v=>setOnline(v.ollama==='connected')).catch(()=>setOnline(false)),8000);return()=>clearInterval(timer)},[])
+  const refreshModelStatus=async()=>{try{const data=await api<{configs:{id:string;enabled:boolean}[];assignments:Record<string,string|null>;default_config_id:string|null}>('/api/model-configs');const usable=data.configs.some(config=>config.enabled);setHasAnyModel(usable);setModelReady(Boolean(data.assignments[currentMode]||data.default_config_id));setOnline(usable)}catch{setOnline(false);setModelReady(false)}}
+  useEffect(()=>{refresh();refreshMemories();void refreshModelStatus();const timer=setInterval(()=>{void refreshModelStatus()},8000);return()=>clearInterval(timer)},[])
+  useEffect(()=>{void refreshModelStatus()},[currentMode])
   useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:'smooth'})},[messages])
 
   const openConversation = async (c: Conversation) => { setError('');try { const d=await api<{messages:Message[]}>('/api/conversations/'+c.id);setActive(c);setSelectedMode(c.mode);setMessages(d.messages);setMobileNav(false) } catch(e){setError(String(e))} }
@@ -66,13 +70,14 @@ export default function App() {
   const startBlank = () => { setActive(null);setMessages([]);setInput('');setError('');setMobileNav(false) }
   const send = async (text=input) => {
     const content=text.trim();if(!content||loading)return
+    try{const config=await api<{assignments:Record<string,string|null>;default_config_id:string|null}>('/api/model-configs');if(!config.assignments[currentMode]&&!config.default_config_id){setError('该人格还没有绑定模型，请先完成模型配置。');setModelManagerOpen(true);return}}catch{setError('本地服务暂不可用，无法检查模型配置。');return}
     let target=active
     if(!target){try{target=await api<Conversation>('/api/conversations',{method:'POST',body:JSON.stringify({mode:selectedMode})});setActive(target);refresh()}catch(e){setError(String(e));return}}
     setInput('');setError('');setLoading(true);setReport(false)
     setMessages(prev=>[...prev,{role:'user',content},{role:'assistant',content:''}])
     try {
-      const response=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversation_id:target.id,content,mode:target.mode,deep_report:report,model:model||undefined,debate_style:target.mode==='debate'?debateStyle:undefined})})
-      if(!response.ok||!response.body)throw new Error('无法连接本地服务，请确认后端已启动。')
+      const response=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversation_id:target.id,content,mode:target.mode,deep_report:report,debate_style:target.mode==='debate'?debateStyle:undefined})})
+      if(!response.ok||!response.body){const issue=await response.json().catch(()=>({detail:'无法连接本地服务，请确认后端已启动。'}));throw new Error(issue.detail||'模型请求失败。')}
       const reader=response.body.getReader(),decoder=new TextDecoder();let buffer=''
       while(true){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const events=buffer.split('\n\n');buffer=events.pop()||'';for(const event of events){const data=event.split('\n').find(line=>line.startsWith('data: '))?.slice(6);if(!data)continue;const payload=JSON.parse(data);if(event.includes('event: error'))throw new Error(payload.message);if(payload.token)setMessages(prev=>{const next=[...prev];next[next.length-1]={...next[next.length-1],content:next[next.length-1].content+payload.token};return next})}}
       refresh()
@@ -93,13 +98,15 @@ export default function App() {
       <button className="nav-item" onClick={()=>{setProfileOpen(true);setMobileNav(false)}}><Brain size={17}/><span>我的认知画像</span></button>
       <div className="history-heading"><span>最近对话</span><span>{conversations.length}</span></div>
       <div className="history-list">{conversations.map(c=><button key={c.id} className={`history-item ${active?.id===c.id?'current':''}`} onClick={()=>openConversation(c)}><MessageCircle size={15}/><span>{c.title}</span><span className="history-actions"><span onClick={e=>toggleFavorite(e,c)} title={c.favorite?'取消收藏':'收藏对话'}><Star size={13} fill={c.favorite?'currentColor':'none'}/></span><span className="delete-chat" onClick={e=>removeConversation(e,c.id)} title="删除对话"><Trash2 size={14}/></span></span></button>)}</div>
-      <div className="sidebar-bottom"><button className="memory-link" onClick={()=>{setKnowledgeOpen(true);setMobileNav(false)}}><BookOpen size={17}/> 专业知识库</button><button className="memory-link" onClick={()=>{setMemOpen(true);refreshMemories()}}><ShieldCheck size={17}/> 本地记忆与隐私</button><div className="local-status"><span className={online?'status-dot online':'status-dot'}/>{online?'本地模型已连接':'等待 Ollama 连接'}</div></div>
+      <div className="sidebar-bottom"><button className="memory-link" onClick={()=>{setKnowledgeOpen(true);setMobileNav(false)}}><BookOpen size={17}/> 专业知识库</button><button className="memory-link" onClick={()=>{setModelManagerOpen(true);setMobileNav(false)}}><Settings2 size={17}/> 模型管理</button><button className="memory-link" onClick={()=>{setMemOpen(true);refreshMemories()}}><ShieldCheck size={17}/> 本地记忆与隐私</button><div className="local-status"><span className={online?'status-dot online':'status-dot'}/>{online?'已配置用户模型':'等待用户配置模型'}</div></div>
     </aside>
 
     <main className="main-area">
-      <header className="topbar"><button className="icon-btn menu-toggle" onClick={()=>setMobileNav(true)} aria-label="打开导航"><span className="hamburger">☰</span></button><div className="crumb"><span>Eunoia——倾听者</span><span className="crumb-sep">/</span><span>{active?modes.find(m=>m.id===active.mode)?.label||'对话':modes.find(m=>m.id===selectedMode)?.label||'安静地，听你说'}</span></div><div className="top-actions"><div className={`connection ${online?'connected':''}`}><i/>{online?'本地运行':'未连接'}</div><div className="model-select"><Settings2 size={15}/><select value={model} onChange={e=>setModel(e.target.value)} aria-label="选择本地模型" disabled={!models.length}><option value="">选择模型</option>{models.map(m=><option key={m}>{m}</option>)}</select><ChevronDown size={13}/></div></div></header>
+      <header className="topbar"><button className="icon-btn menu-toggle" onClick={()=>setMobileNav(true)} aria-label="打开导航"><span className="hamburger">☰</span></button><div className="crumb"><span>Eunoia——倾听者</span><span className="crumb-sep">/</span><span>{active?modes.find(m=>m.id===active.mode)?.label||'对话':modes.find(m=>m.id===selectedMode)?.label||'安静地，听你说'}</span></div><div className="top-actions"><div className={`connection ${online?'connected':''}`}><i/>{online?'已配置模型':'未配置模型'}</div><button className="model-manager-trigger" onClick={()=>setModelManagerOpen(true)}><Settings2 size={15}/>模型管理</button></div></header>
       <div className={`conversation-area ${messages.length?'has-messages':''}`}>
         {messages.length===0?<section className="welcome">
+          {!hasAnyModel&&<section className="model-onboarding"><strong>欢迎使用 Eunoia。</strong><p>Eunoia 不提供内置 AI 模型服务。你需要自行申请第三方模型 API，并在模型管理中完成配置。</p><p>配置完成后，即可开启你的六人格探索之旅。</p><button onClick={()=>setModelManagerOpen(true)}><Settings2 size={15}/>前往模型配置</button></section>}
+          {hasAnyModel&&!modelReady&&<section className="model-onboarding compact"><p>当前人格尚未绑定模型。请在模型管理中选择已接入的模型，或设置全局默认模型。</p><button onClick={()=>setModelManagerOpen(true)}><Settings2 size={15}/>绑定模型</button></section>}
           <div className="portrait-wrap"><img className="portrait-art" src="/eunoia-avatar.jpg" alt="Eunoia 白发形象"/><span className="online-ring"/></div>
           <p className="eyebrow">一处留给自己的空间</p><h1>你好，我是 <em>{activePersona}</em></h1><p className="welcome-copy">{currentSpace.welcome}</p>
           <div className="space-grid">{modes.map(({id,label,icon:Icon,desc})=><button key={id} className={currentMode===id?'selected':''} onClick={()=>selectSpace(id)}><Icon size={18}/><strong>{label}</strong><span>{desc}</span></button>)}</div>
@@ -113,5 +120,6 @@ export default function App() {
     {memOpen&&<MemoryEditor onClose={()=>setMemOpen(false)}/>}
     {profileOpen&&<CognitiveProfile onClose={()=>setProfileOpen(false)}/>}
     {knowledgeOpen&&<KnowledgeManager onClose={()=>setKnowledgeOpen(false)}/>}
+    {modelManagerOpen&&<ModelManager onClose={()=>setModelManagerOpen(false)} onChanged={()=>{void refreshModelStatus()}}/>}
   </div>
 }

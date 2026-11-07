@@ -65,5 +65,37 @@ def init_db() -> None:
             query TEXT NOT NULL, method TEXT NOT NULL, hits_json TEXT NOT NULL DEFAULT '[]',
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS model_configs (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL DEFAULT 'custom',
+            base_url TEXT NOT NULL, model_id TEXT NOT NULL, protocol TEXT NOT NULL,
+            api_key_enc TEXT NOT NULL DEFAULT '', parameters_json TEXT NOT NULL DEFAULT '{}',
+            headers_json TEXT NOT NULL DEFAULT '{}', timeout_seconds REAL NOT NULL DEFAULT 120,
+            capabilities_json TEXT NOT NULL DEFAULT '{}', input_price_per_million REAL,
+            output_price_per_million REAL, enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS persona_model_bindings (
+            persona TEXT PRIMARY KEY, config_id TEXT REFERENCES model_configs(id) ON DELETE SET NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS persona_model_settings (
+            persona TEXT PRIMARY KEY, temperature REAL, max_output_tokens INTEGER,
+            thinking_mode INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS model_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, config_id TEXT, persona TEXT NOT NULL,
+            provider TEXT NOT NULL, model_id TEXT NOT NULL, input_tokens INTEGER, output_tokens INTEGER,
+            cost_estimate REAL, cost_basis TEXT NOT NULL DEFAULT 'unknown', status TEXT NOT NULL,
+            error_category TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
         INSERT OR IGNORE INTO settings(key, value) VALUES ('memory_enabled','0');
         """)
+        columns = {row[1] for row in db.execute("PRAGMA table_info(model_configs)").fetchall()}
+        additions = {
+            "headers_json": "TEXT NOT NULL DEFAULT '{}'", "timeout_seconds": "REAL NOT NULL DEFAULT 120",
+            "capabilities_json": "TEXT NOT NULL DEFAULT '{}'", "input_price_per_million": "REAL",
+            "output_price_per_million": "REAL", "enabled": "INTEGER NOT NULL DEFAULT 1",
+        }
+        for name, declaration in additions.items():
+            if name not in columns:
+                db.execute(f"ALTER TABLE model_configs ADD COLUMN {name} {declaration}")

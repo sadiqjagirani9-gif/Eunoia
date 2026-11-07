@@ -1,7 +1,7 @@
 import json
 from fastapi.testclient import TestClient
 
-from app import main as main_module
+from app import main as main_module, model_config
 from app.main import app
 
 
@@ -39,6 +39,9 @@ def test_lucien_and_felix_chat_use_their_own_prompts_and_keep_histories_separate
         async def aiter_lines(self):
             yield json.dumps({"message": {"content": "本地回复"}})
 
+        def raise_for_status(self):
+            return None
+
     class StreamContext:
         async def __aenter__(self):
             return FakeResponse()
@@ -56,8 +59,8 @@ def test_lucien_and_felix_chat_use_their_own_prompts_and_keep_histories_separate
         async def __aexit__(self, *_):
             return None
 
-        def stream(self, method, url, json):
-            captured.append(json)
+        def stream(self, method, url, **kwargs):
+            captured.append(kwargs["json"])
             return StreamContext()
 
     async def no_references(query, mode):
@@ -67,6 +70,13 @@ def test_lucien_and_felix_chat_use_their_own_prompts_and_keep_histories_separate
     monkeypatch.setattr(main_module.knowledge, "retrieve", no_references)
     monkeypatch.setattr(main_module, "record_cognitive_observation", lambda *_: None)
     with TestClient(app) as client:
+        local_config = model_config.save_config({
+            "name": "Fake local model", "provider": "Ollama", "base_url": "http://127.0.0.1:11434",
+            "model_id": "test-local", "protocol": "ollama", "api_key": "", "parameters": {},
+            "headers": {}, "timeout_seconds": 10, "capabilities": {},
+        })
+        model_config.assign("lucien", local_config["id"])
+        model_config.assign("felix", local_config["id"])
         saved = client.post("/api/memories", json={"category": "偏好", "content": "喜欢轻松交流", "kind": "self_report"})
         assert saved.status_code == 200
         client.put("/api/memories/enabled", json={"enabled": True})

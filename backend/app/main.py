@@ -20,9 +20,9 @@ from .personas import debate_instruction, normalize_mode, system_prompt_for
 from . import knowledge
 from .advanced import dual_analysis, graph_snapshot, save_graph, simulate
 from .profile.api import router as cognitive_router, observe as record_cognitive_observation, ObserveInput
+from . import model_config, llm
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
-DEFAULT_MODEL = os.environ.get("EUNOIA_MODEL", "qwen2.5:7b")
 
 
 @asynccontextmanager
@@ -95,27 +95,162 @@ class KnowledgeSearch(BaseModel):
     mode: str
     query: str = Field(min_length=1, max_length=4000)
 
+class ModelConfigInput(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    provider: str = Field(default="custom", max_length=100)
+    base_url: str = Field(min_length=1, max_length=2048)
+    model_id: str = Field(min_length=1, max_length=200)
+    protocol: str
+    api_key: str = Field(default="", max_length=4096)
+    clear_api_key: bool = False
+    parameters: dict = Field(default_factory=dict)
+    headers: dict[str, str] = Field(default_factory=dict)
+    timeout_seconds: float = Field(default=120, ge=2, le=300)
+    capabilities: dict = Field(default_factory=dict)
+    input_price_per_million: float | None = Field(default=None, ge=0)
+    output_price_per_million: float | None = Field(default=None, ge=0)
+
+class PersonaBindingsInput(BaseModel):
+    assignments: dict[str, str | None]
+
+class PersonaModelSettingsInput(BaseModel):
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    max_output_tokens: int | None = Field(default=None, ge=1, le=200000)
+    thinking_mode: bool = False
+
 
 @app.get("/api/health")
 async def health():
-    try:
-        async with httpx.AsyncClient(timeout=2) as client:
-            response = await client.get(f"{OLLAMA_URL}/api/tags")
-            response.raise_for_status()
-        return {"status": "ok", "ollama": "connected"}
-    except (httpx.HTTPError, ValueError):
-        return {"status": "ok", "ollama": "disconnected"}
+    configs = model_config.list_configs()
+    return {"status": "ok", "configured_models": len(configs), "ollama": "available_as_provider"}
 
 
 @app.get("/api/models")
 async def models():
+    configs = model_config.list_configs()
+    assignments = model_config.bindings()
+    return {"models": configs, "assignments": assignments, "default": ""}
+
+
+@app.get("/api/model-configs")
+def list_model_configs():
+    return {"configs": model_config.list_configs(), "assignments": model_config.bindings(), "persona_settings": model_config.persona_settings(), "default_config_id": model_config.get_default(), "personas": list(model_config.PERSONAS)}
+
+
+@app.get("/api/model-templates")
+def model_templates():
+    return {"templates": [
+        {"provider": "DeepSeek", "base_url": "https://api.deepseek.com", "protocol": "openai_compatible"},
+        {"provider": "阿里云 Qwen", "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "protocol": "openai_compatible"},
+        {"provider": "OpenAI", "base_url": "https://api.openai.com/v1", "protocol": "openai_compatible"},
+        {"provider": "Anthropic", "base_url": "https://api.anthropic.com", "protocol": "anthropic"},
+        {"provider": "智谱 AI", "base_url": "https://open.bigmodel.cn/api/paas/v4", "protocol": "openai_compatible"},
+        {"provider": "Moonshot AI", "base_url": "https://api.moonshot.cn/v1", "protocol": "openai_compatible"},
+        {"provider": "MiniMax", "base_url": "https://api.minimax.io/v1", "protocol": "openai_compatible"},
+        {"provider": "Ollama 本地", "base_url": OLLAMA_URL, "protocol": "ollama"},
+        {"provider": "自定义服务商", "base_url": "", "protocol": "openai_compatible"},
+    ]}
+
+
+@app.post("/api/model-configs")
+def create_model_config(body: ModelConfigInput):
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            response = await client.get(f"{OLLAMA_URL}/api/tags")
-            response.raise_for_status()
-        return {"models": [item["name"] for item in response.json().get("models", [])], "default": DEFAULT_MODEL}
-    except httpx.HTTPError as exc:
-        raise HTTPException(503, "无法连接本机 Ollama，请确认 Ollama 已启动。") from exc
+        config = model_config.save_config(body.model_dump())
+        return {"config": config}
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/model-configs/{config_id}")
+def get_model_config(config_id: str):
+    config = model_config.get_config(config_id)
+    if not config:
+        raise HTTPException(404, "模型配置不存在")
+    return {"config": config}
+
+
+@app.put("/api/model-configs/{config_id}")
+def update_model_config(config_id: str, body: ModelConfigInput):
+    if not model_config.get_config(config_id):
+        raise HTTPException(404, "模型配置不存在")
+    try:
+        config = model_config.save_config(body.model_dump(), config_id)
+        return {"config": config}
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.delete("/api/model-configs/{config_id}")
+def remove_model_config(config_id: str):
+    if not model_config.delete_config(config_id):
+        raise HTTPException(404, "模型配置不存在")
+    return {"deleted": True, "assignments": model_config.bindings()}
+
+
+@app.put("/api/model-configs/{config_id}/enabled")
+def enable_model_config(config_id: str, body: SettingInput):
+    with connect() as db:
+        cursor = db.execute("UPDATE model_configs SET enabled=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (int(body.enabled), config_id))
+        if cursor.rowcount and not body.enabled:
+            db.execute("DELETE FROM settings WHERE key='default_model_config' AND value=?", (config_id,))
+    if not cursor.rowcount:
+        raise HTTPException(404, "模型配置不存在")
+    return {"enabled": body.enabled, "default_config_id": model_config.get_default()}
+
+
+@app.put("/api/model-default")
+def set_default_model(body: dict):
+    try:
+        model_config.set_default(body.get("config_id"))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"default_config_id": model_config.get_default()}
+
+
+@app.put("/api/persona-models")
+def set_persona_models(body: PersonaBindingsInput):
+    try:
+        for persona, config_id in body.assignments.items():
+            model_config.assign(persona, config_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"assignments": model_config.bindings()}
+
+
+@app.put("/api/persona-models/{persona}/settings")
+def update_persona_model_settings(persona: str, body: PersonaModelSettingsInput):
+    try:
+        settings = model_config.set_persona_settings(persona, body.temperature, body.max_output_tokens, body.thinking_mode)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"settings": settings}
+
+
+@app.get("/api/model-usage")
+def model_usage():
+    return model_config.usage_summary()
+
+
+@app.post("/api/model-configs/{config_id}/test")
+async def test_model_config(config_id: str):
+    config = model_config.get_config(config_id, include_secret=True)
+    if not config:
+        raise HTTPException(404, "模型配置不存在")
+    if config["protocol"] != "ollama" and not config.get("api_key"):
+        raise HTTPException(422, "请先填写 API Key")
+    try:
+        result = await llm.test_connection(config)
+        return {"ok": True, "response": result[:200]}
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        category = "认证失败" if status in {401, 403} else "模型不存在" if status == 404 else "额度或速率限制" if status in {402, 429} else "请求格式错误" if status in {400, 422} else "服务端错误"
+        raise HTTPException(502, f"{category}（HTTP {status}）。请核对服务商返回的模型 ID、额度和协议配置。") from exc
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, "网络超时，请检查 API 地址、超时设置和网络连接。") from exc
+    except httpx.NetworkError as exc:
+        raise HTTPException(502, "网络连接失败，请检查 API Base URL 和网络状态。") from exc
+    except (httpx.HTTPError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(502, "接口响应无法解析，请检查 API 协议和服务商响应格式。") from exc
 
 
 @app.get("/api/knowledge/sources")
@@ -215,7 +350,7 @@ async def advanced_dual(body: AdvancedRequest):
     try:
         return await dual_analysis(body.content, body.model)
     except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(503, '双重人格分析需要本机 Ollama 和已下载模型。') from exc
+        raise HTTPException(503, '请先为该分析使用的人格绑定可用模型，然后检查模型服务连接。') from exc
 
 @app.get('/api/advanced/graph')
 def advanced_graph():
@@ -258,7 +393,7 @@ async def advanced_simulation(body: AdvancedRequest):
     try:
         return await simulate(body.content, body.model)
     except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(503, '反事实模拟需要本机 Ollama 和已下载模型。') from exc
+        raise HTTPException(503, '请先为生活指导人格绑定可用模型，然后检查模型服务连接。') from exc
 
 
 @app.get("/api/conversations")
@@ -360,12 +495,16 @@ async def chat_stream(body: ChatRequest):
         conversation = db.execute("SELECT * FROM conversations WHERE id=?", (body.conversation_id,)).fetchone()
         if not conversation:
             raise HTTPException(404, "对话不存在")
+        mode = normalize_mode(conversation["mode"])
+    config = model_config.resolve(mode)
+    if not config:
+        raise HTTPException(409, "该人格尚未绑定模型。请先在模型管理中添加 API 配置并为此人格选择模型。")
+    with connect() as db:
         db.execute("INSERT INTO messages(conversation_id,role,content,analysis_json) VALUES(?,?,?,?)", (body.conversation_id, "user", body.content, json.dumps(analyze(body.content), ensure_ascii=False)))
         prior = db.execute("SELECT role,content FROM messages WHERE conversation_id=? ORDER BY id DESC LIMIT 21", (body.conversation_id,)).fetchall()
         prior = list(reversed(prior))[:-1]
         settings = dict(db.execute("SELECT key,value FROM settings").fetchall())
         memories = db.execute("SELECT category,content,kind,confidence FROM memories ORDER BY updated_at DESC LIMIT 30").fetchall() if settings.get("memory_enabled") == "1" else []
-        mode = normalize_mode(conversation["mode"])
     signal = analyze(body.content)
     try:
         record_cognitive_observation(ObserveInput(content=body.content, conversation_id=body.conversation_id))
@@ -401,29 +540,35 @@ async def chat_stream(body: ChatRequest):
     if signal["safety_signal"]:
         system += "\n\n安全优先提示：用户文本出现潜在危机线索。开头先温和、直接确认其当前是否有立即危险或具体计划，并引导联系现实中的可信任者及当地紧急/危机服务。避免评判或让其独自承担。"
     messages = [{"role": "system", "content": system}] + [dict(m) for m in prior] + [{"role": "user", "content": body.content}]
-    model = body.model or DEFAULT_MODEL
-
     async def stream():
         answer = ""
+        token_usage: dict[str, int | None] = {"input": None, "output": None}
+        usage_saved = False
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(180, connect=4)) as client:
-                async with client.stream("POST", f"{OLLAMA_URL}/api/chat", json={"model": model, "messages": messages, "stream": True}) as response:
-                    if response.status_code >= 400:
-                        yield "event: error\ndata: " + json.dumps({"message": "Ollama 请求失败，请检查模型名称和服务状态。"}, ensure_ascii=False) + "\n\n"
-                        return
-                    async for line in response.aiter_lines():
-                        if not line:
-                            continue
-                        item = json.loads(line)
-                        token = item.get("message", {}).get("content", "")
-                        if token:
-                            answer += token
-                            yield "data: " + json.dumps({"token": token}, ensure_ascii=False) + "\n\n"
+            def capture_usage(input_tokens, output_tokens):
+                token_usage["input"], token_usage["output"] = input_tokens, output_tokens
+
+            async for token in llm.stream_chat(config, messages, capture_usage):
+                answer += token
+                yield "data: " + json.dumps({"token": token}, ensure_ascii=False) + "\n\n"
+            model_config.record_usage(config, mode, "success", token_usage["input"], token_usage["output"])
+            usage_saved = True
             with connect() as db:
                 db.execute("INSERT INTO messages(conversation_id,role,content,analysis_json) VALUES(?,?,?,?)", (body.conversation_id, "assistant", answer, json.dumps(signal, ensure_ascii=False)))
                 db.execute("UPDATE conversations SET updated_at=CURRENT_TIMESTAMP, title=CASE WHEN title='新的对话' THEN ? ELSE title END WHERE id=?", (body.content[:32], body.conversation_id))
             yield "event: done\ndata: " + json.dumps({"analysis": signal}, ensure_ascii=False) + "\n\n"
-        except (httpx.HTTPError, json.JSONDecodeError) as exc:
-            yield "event: error\ndata: " + json.dumps({"message": "无法连接本机 Ollama。请确认服务已启动并且模型已下载。"}, ensure_ascii=False) + "\n\n"
+        except (httpx.HTTPError, json.JSONDecodeError, ValueError) as exc:
+            if not usage_saved:
+                if isinstance(exc, httpx.HTTPStatusError):
+                    code = exc.response.status_code
+                    category = "authentication" if code in {401, 403} else "quota_or_rate_limit" if code in {402, 429} else "model_not_found" if code == 404 else "invalid_request" if code in {400, 422} else "provider_error"
+                elif isinstance(exc, httpx.TimeoutException):
+                    category = "timeout"
+                elif isinstance(exc, httpx.NetworkError):
+                    category = "network"
+                else:
+                    category = "invalid_response"
+                model_config.record_usage(config, mode, "failed", error_category=category)
+            yield "event: error\ndata: " + json.dumps({"message": "模型请求失败。请检查当前人格绑定的 API 配置、网络状态和服务商额度。"}, ensure_ascii=False) + "\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
