@@ -11,7 +11,7 @@ from app.providers.ollama import OllamaAdapter
 from app.providers.openai_compatible import OpenAICompatibleAdapter
 
 
-def _data(name="Test API", protocol="openai_compatible", base_url="https://api.example.test/v1", model_id="example-chat", api_key="sk-local-test-secret"):
+def _data(name="Test API", protocol="openai_compatible", base_url="https://api.example.test/v1", model_id="example-chat", api_key="test-local-key"):
     return {
         "name": name, "provider": "Custom", "base_url": base_url, "model_id": model_id,
         "protocol": protocol, "api_key": api_key, "parameters": {"temperature": 0.4, "max_tokens": 64},
@@ -28,8 +28,8 @@ def test_api_key_is_encrypted_and_never_returned(tmp_path, monkeypatch):
     assert "api_key" not in config and "api_key_enc" not in config
     with connect() as db:
         stored = db.execute("SELECT api_key_enc FROM model_configs WHERE id=?", (config["id"],)).fetchone()[0]
-    assert "sk-local-test-secret" not in stored
-    assert model_config.decrypt_secret(stored) == "sk-local-test-secret"
+    assert "test-local-key" not in stored
+    assert model_config.decrypt_secret(stored) == "test-local-key"
     if model_config.os.name == "nt":
         assert stored.startswith("dpapi:")
     else:
@@ -49,7 +49,7 @@ def test_six_personas_bind_independently_and_can_use_global_default(tmp_path, mo
     monkeypatch.setenv("EUNOIA_DATA_DIR", str(tmp_path))
     init_db()
     first = model_config.save_config(_data(name="A"))
-    second = model_config.save_config(_data(name="B", model_id="other-chat", api_key="sk-another-secret"))
+    second = model_config.save_config(_data(name="B", model_id="other-chat", api_key="test-another-key"))
     model_config.set_default(first["id"])
     model_config.assign("anatomy", second["id"])
     for persona in model_config.PERSONAS[1:]:
