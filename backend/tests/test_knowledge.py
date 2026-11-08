@@ -15,7 +15,7 @@ def test_curated_knowledge_is_loaded_and_retrieval_is_persona_scoped(tmp_path, m
     monkeypatch.setattr(knowledge, "_embed", lambda texts: _no_embeddings())
 
     sources = knowledge.list_sources()
-    assert len(sources) == 43
+    assert len(sources) == 70
     results, method = asyncio.run(knowledge.retrieve("prospect theory loss aversion", create_persona_context("guidance")))
     assert method == "local_lexical"
     assert results
@@ -81,17 +81,44 @@ def test_domain_catalog_keeps_spaces_separate():
 
 def test_each_seed_document_has_the_required_evidence_fields():
     documents = list(knowledge.KNOWLEDGE_ROOT.glob("*/*/*.md"))
-    assert len(documents) == 43
+    assert len(documents) == 70
     required = [f"## {index}." for index in range(1, 13)]
-    assert all(all(marker in path.read_text(encoding="utf-8") for marker in required) for path in documents)
+    legacy_documents = [path for path in documents if path.parts[-3] not in {"haven", "haven_emotional_support"}]
+    assert all(all(marker in path.read_text(encoding="utf-8") for marker in required) for path in legacy_documents)
     for path in documents:
-        if path.parts[-3] in {"lucien", "felix"}:
+        if path.parts[-3] in {"lucien", "felix", "haven", "haven_emotional_support"}:
             metadata = knowledge._source_metadata(path)
             assert metadata.get("creator")
             assert metadata.get("discipline")
             assert metadata.get("license")
             assert metadata.get("summary")
             assert metadata.get("scope")
+
+
+def test_haven_language_namespace_is_isolated_and_searchable(tmp_path, monkeypatch):
+    monkeypatch.setenv("EUNOIA_DATA_DIR", str(tmp_path / "data"))
+    init_db()
+    knowledge.initialize_knowledge()
+    monkeypatch.setattr(knowledge, "_embed", lambda texts: _no_embeddings())
+    results, method = asyncio.run(knowledge.retrieve_haven_language("阴阳怪气 双重标准 反击"))
+    assert method == "local_lexical"
+    assert results
+    assert all("/haven/" in row["source_path"].replace("\\", "/") for row in results)
+    assert all(row["domain"] in knowledge.HAVEN_DOMAIN_LABELS for row in results)
+    assert "haven" not in knowledge.PERSONA_DOMAINS
+
+
+def test_haven_emotional_support_namespace_is_isolated_and_searchable(tmp_path, monkeypatch):
+    monkeypatch.setenv("EUNOIA_DATA_DIR", str(tmp_path / "data"))
+    init_db()
+    knowledge.initialize_knowledge()
+    monkeypatch.setattr(knowledge, "_embed", lambda texts: _no_embeddings())
+    results, method = asyncio.run(knowledge.retrieve_haven_emotional_support("失恋 悲伤 不想听建议"))
+    assert method == "local_lexical"
+    assert results
+    assert all("/haven_emotional_support/" in row["source_path"].replace("\\", "/") for row in results)
+    assert all(row["domain"] in knowledge.HAVEN_EMOTIONAL_DOMAIN_LABELS for row in results)
+    assert all("/haven/" not in row["source_path"].replace("\\", "/") for row in results)
 
 
 def test_lucien_and_felix_retrieval_uses_only_their_own_knowledge(tmp_path, monkeypatch):

@@ -267,7 +267,7 @@ async def test_model_config(config_id: str):
 
 @app.get("/api/knowledge/sources")
 def knowledge_sources():
-    return {"sources": knowledge.list_sources(), "domains": {key: sorted(value) for key, value in knowledge.DOMAIN_LABELS.items()}, "embedding_model": knowledge.EMBEDDING_MODEL}
+    return {"sources": knowledge.list_sources(), "domains": {key: sorted(value) for key, value in knowledge.all_domains().items()}, "embedding_model": knowledge.EMBEDDING_MODEL}
 
 
 @app.get("/api/knowledge/sources/{source_id}")
@@ -292,13 +292,19 @@ async def update_knowledge_source(source_id: str, body: KnowledgeUpdate):
 
 @app.get("/api/knowledge/hits")
 def knowledge_hits(persona: str | None = None):
-    if persona and persona not in set(knowledge.DOMAIN_LABELS):
+    if persona and persona not in set(knowledge.all_domains()):
         raise HTTPException(422, "人格无效")
     return {"hits": knowledge.list_search_hits(persona)}
 
 
 @app.post("/api/knowledge/search")
 async def knowledge_search(body: KnowledgeSearch):
+    if body.mode == "haven":
+        results, method = await knowledge.retrieve_haven_language(body.query)
+        return {"results": results, "method": method, "mode": "haven"}
+    if body.mode == "haven_emotional_support":
+        results, method = await knowledge.retrieve_haven_emotional_support(body.query)
+        return {"results": results, "method": method, "mode": "haven_emotional_support"}
     mode = normalize_mode(body.mode)
     context = create_persona_context(mode)
     results, method = await knowledge.retrieve(body.query, context)
@@ -313,7 +319,7 @@ async def knowledge_reindex():
 @app.post("/api/knowledge/import")
 async def knowledge_import(body: KnowledgeImport):
     try:
-        if body.persona not in knowledge.DOMAIN_LABELS or body.domain not in knowledge.DOMAIN_LABELS[body.persona]:
+        if body.domain not in knowledge.domains_for(body.persona):
             raise ValueError("人格或知识领域无效")
         content = body.content
         source_type = "imported"

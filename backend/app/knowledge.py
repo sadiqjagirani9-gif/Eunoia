@@ -43,6 +43,25 @@ DOMAIN_LABELS = {
     "lucien": {"literature", "poetry", "art_history", "visual_arts", "music", "film_drama", "aesthetics"},
     "felix": {"humor_theory", "linguistics", "internet_culture", "popular_culture", "games_entertainment", "social_psychology", "daily_knowledge", "conversation_cases"},
 }
+HAVEN_DOMAIN_LABELS = {"rhetoric", "sarcasm", "sharp_tongue", "profanity_pragmatics", "logic_rebuttal", "humor", "internet_language", "conflict_communication", "response_templates", "style_profiles", "context_intensity", "quality_control"}
+HAVEN_EMOTIONAL_DOMAIN_LABELS = {
+    "emotion_psychology", "emotion_comfort", "life_difficulties", "empathy", "comfort_language",
+    "acceptance", "companionship", "comfort_taboo", "needs_recognition", "relationship_support",
+    "self_compassion", "loss_grief", "existential_support", "stress_regulation", "crisis_boundaries",
+}
+
+
+def domains_for(persona: str) -> set[str]:
+    """Return catalog domains without registering Haven as a normal persona."""
+    if persona == "haven":
+        return HAVEN_DOMAIN_LABELS
+    if persona == "haven_emotional_support":
+        return HAVEN_EMOTIONAL_DOMAIN_LABELS
+    return DOMAIN_LABELS.get(persona, set())
+
+
+def all_domains() -> dict[str, set[str]]:
+    return {**DOMAIN_LABELS, "haven": HAVEN_DOMAIN_LABELS, "haven_emotional_support": HAVEN_EMOTIONAL_DOMAIN_LABELS}
 
 
 def _digest(text: str) -> str:
@@ -122,7 +141,7 @@ def initialize_knowledge() -> None:
             "SELECT id,persona,domain,title,source_path,content FROM knowledge_sources WHERE source_type!='curated'"
         ).fetchall()
         for row in imported:
-            if row["persona"] not in DOMAIN_LABELS or row["domain"] not in DOMAIN_LABELS[row["persona"]]:
+            if row["domain"] not in domains_for(row["persona"]):
                 continue
             recorded_path = Path(row["source_path"])
             old_path = recorded_path.resolve()
@@ -163,7 +182,7 @@ def initialize_knowledge() -> None:
     for path in KNOWLEDGE_ROOT.glob("*/*/*.md"):
         try:
             persona, domain, title = _source_meta(path)
-            if persona not in DOMAIN_LABELS or domain not in DOMAIN_LABELS[persona]:
+            if domain not in domains_for(persona):
                 continue
             _store_source(str(path.resolve()), persona, domain, title, path.read_text(encoding="utf-8"), "curated", _source_metadata(path))
         except (OSError, ValueError, json.JSONDecodeError):
@@ -267,6 +286,81 @@ async def retrieve(query: str, context: PersonaContext, limit: int = 5) -> tuple
     return selected, method
 
 
+async def retrieve_haven_language(query: str, limit: int = 4, user_id: str = LOCAL_USER_ID) -> tuple[list[dict], str]:
+    """Retrieve only the curated Haven language namespace.
+
+    This intentionally does not construct a normal PersonaContext: Haven is a
+    separate listening space and must never become a seventh analytical persona.
+    The SQL predicate pins both source and chunk ownership to the Haven
+    namespace, while the caller supplies only the current user id.
+    """
+    if not query.strip():
+        return [], "empty"
+    with connect() as db:
+        rows = db.execute(
+            "SELECT c.id,c.domain,c.heading,c.content,c.embedding_json,s.title,s.source_path,s.source_type "
+            "FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id "
+            "WHERE c.user_id=? AND s.user_id=? AND c.persona='haven' AND s.persona='haven' ORDER BY c.id",
+            (user_id, user_id),
+        ).fetchall()
+    if not rows:
+        _log_search(user_id, "haven", "haven", query, "empty", [])
+        return [], "empty"
+    query_vectors = await _embed([query])
+    qvector = query_vectors[0] if query_vectors else None
+    scored = []
+    for row in rows:
+        lexical = _lexical_score(query, row["content"] + " " + row["title"] + " " + row["domain"])
+        vector = json.loads(row["embedding_json"]) if row["embedding_json"] else None
+        semantic = _cosine(qvector, vector) if qvector and vector else None
+        score = (0.65 * semantic + 0.35 * lexical) if semantic is not None else lexical
+        if score > 0:
+            scored.append((score, row))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    selected = [{"score": round(score, 4), "domain": row["domain"], "heading": row["heading"],
+                 "title": row["title"], "source_path": row["source_path"],
+                 "source_type": row["source_type"], "content": row["content"]}
+                for score, row in scored[:limit]]
+    method = "ollama_embedding+local_lexical" if qvector and any(row["embedding_json"] for row in rows) else "local_lexical"
+    _log_search(user_id, "haven", "haven", query, method, selected)
+    return selected, method
+
+
+async def retrieve_haven_emotional_support(query: str, limit: int = 4, user_id: str = LOCAL_USER_ID) -> tuple[list[dict], str]:
+    """Retrieve only Haven's emotional comfort and support namespace."""
+    if not query.strip():
+        return [], "empty"
+    persona = "haven_emotional_support"
+    with connect() as db:
+        rows = db.execute(
+            "SELECT c.id,c.domain,c.heading,c.content,c.embedding_json,s.title,s.source_path,s.source_type "
+            "FROM knowledge_chunks c JOIN knowledge_sources s ON s.id=c.source_id "
+            "WHERE c.user_id=? AND s.user_id=? AND c.persona=? AND s.persona=? ORDER BY c.id",
+            (user_id, user_id, persona, persona),
+        ).fetchall()
+    if not rows:
+        _log_search(user_id, "haven_emotional_support", persona, query, "empty", [])
+        return [], "empty"
+    query_vectors = await _embed([query])
+    qvector = query_vectors[0] if query_vectors else None
+    scored = []
+    for row in rows:
+        lexical = _lexical_score(query, row["content"] + " " + row["title"] + " " + row["domain"])
+        vector = json.loads(row["embedding_json"]) if row["embedding_json"] else None
+        semantic = _cosine(qvector, vector) if qvector and vector else None
+        score = (0.65 * semantic + 0.35 * lexical) if semantic is not None else lexical
+        if score > 0:
+            scored.append((score, row))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    selected = [{"score": round(score, 4), "domain": row["domain"], "heading": row["heading"],
+                 "title": row["title"], "source_path": row["source_path"],
+                 "source_type": row["source_type"], "content": row["content"]}
+                for score, row in scored[:limit]]
+    method = "ollama_embedding+local_lexical" if qvector and any(row["embedding_json"] for row in rows) else "local_lexical"
+    _log_search(user_id, "haven_emotional_support", persona, query, method, selected)
+    return selected, method
+
+
 def _log_search(user_id: str, mode: str, persona: str, query: str, method: str, hits: list[dict]) -> None:
     compact_hits = [{"title": item["title"], "domain": item["domain"], "score": item["score"]} for item in hits]
     with connect() as db:
@@ -316,7 +410,7 @@ def update_source(source_id: str, content: str, metadata: dict | None = None) ->
 
 
 def import_text(persona: str, domain: str, name: str, content: str, source_type: str = "imported", metadata: dict | None = None) -> dict:
-    if persona not in DOMAIN_LABELS or domain not in DOMAIN_LABELS[persona]:
+    if domain not in domains_for(persona):
         raise ValueError("人格或知识领域无效")
     safe_name = re.sub(r"[^\w.\-\u3400-\u9fff]+", "_", Path(name).name).strip("._") or "imported.md"
     folder = import_root() / persona / domain
